@@ -949,7 +949,7 @@ class File:
         )
 
 
-class RegexFile:
+class RegexFile(File):
     pass
 
 
