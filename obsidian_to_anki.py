@@ -396,7 +396,7 @@ class InlineNote(Note):
 
 
 class RegexNote:
-    ID_REGEXP_STR = r"(ID: \d+)"
+    ID_REGEXP_STR = r"\n(ID: \d+)"
     TAG_REGEXP_STR = r"(Tags: .+)"
 
     def __init__(self, matchobject, note_type, tags=False, id=False):
@@ -951,6 +951,7 @@ class File:
                     self.id_indexes, [
                         self.id_to_str(id)
                         for id in self.note_ids[:len(self.notes_to_add)]
+                        if id is not None
                     ]
                 )
             ) + list(
@@ -958,6 +959,7 @@ class File:
                     self.inline_id_indexes, [
                         self.id_to_str(id, inline=True)
                         for id in self.note_ids[len(self.notes_to_add):]
+                        if id is not None
                     ]
                 )
             )
@@ -1146,8 +1148,9 @@ class RegexFile(File):
         self.file = string_insert(
             self.file, zip(
                 self.id_indexes, [
-                    self.id_to_str(id, inline=True)
+                    self.id_to_str(id)
                     for id in self.note_ids
+                    if id is not None
                 ]
             )
         )
