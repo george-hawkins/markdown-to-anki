@@ -1,0 +1,7 @@
+.DS_Store
+.idea/
+venv/
+decks/
+markdown_to_anki_config.ini
+markdown_to_anki_data.json
+markdown_to_anki_log.log

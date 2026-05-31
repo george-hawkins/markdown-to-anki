@@ -1,30 +1,20 @@
-"""Script for adding cards to Anki from Obsidian."""
-
 import re
 import json
 import urllib.request
 import configparser
 import os
 import collections
-import webbrowser
 import markdown
 import base64
 import argparse
 import html
 import time
 import socket
-import subprocess
 import logging
 import hashlib
-try:
-    import gooey
-    GOOEY = True
-except ModuleNotFoundError:
-    print("Gooey not installed, switching to cli...")
-    GOOEY = False
 
 logging.basicConfig(
-    filename='obsidian_to_anki_log.log',
+    filename='markdown_to_anki_log.log',
     level=logging.DEBUG,
     format='%(asctime)s:::%(levelname)s:::%(funcName)s:::%(message)s'
 )
@@ -43,7 +33,7 @@ NOTE_DICT_TEMPLATE = {
         "allowDuplicate": False,
         "duplicateScope": "deck"
     },
-    "tags": ["Obsidian_to_Anki"],
+    "tags": ["Markdown_to_Anki"],
     # ^So that you can see what was added automatically.
     "audio": list()
 }
@@ -51,7 +41,7 @@ NOTE_DICT_TEMPLATE = {
 CONFIG_PATH = os.path.expanduser(
     os.path.join(
         os.path.dirname(os.path.realpath(__file__)),
-        "obsidian_to_anki_config.ini"
+        "markdown_to_anki_config.ini"
     )
 )
 CONFIG_DATA = dict()
@@ -59,7 +49,7 @@ CONFIG_DATA = dict()
 DATA_PATH = os.path.expanduser(
     os.path.join(
         os.path.dirname(os.path.realpath(__file__)),
-        "obsidian_to_anki_data.json"
+        "markdown_to_anki_data.json"
     )
 )
 
@@ -178,38 +168,6 @@ def wait_for_port(port, host='localhost', timeout=5.0):
                 ) from ex
 
 
-def load_anki():
-    """Attempt to load anki in the correct profile."""
-    try:
-        Config.load_config()
-    except Exception as e:
-        print("Error when loading config:", e)
-        print("Please open Anki before running script again.")
-        return False
-    if CONFIG_DATA["Path"] and CONFIG_DATA["Profile"]:
-        print("Anki Path and Anki Profile provided.")
-        print("Attempting to open Anki in selected profile...")
-        subprocess.Popen(
-            [CONFIG_DATA["Path"], "-p", CONFIG_DATA["Profile"]]
-        )
-        try:
-            wait_for_port(ANKI_PORT)
-        except TimeoutError:
-            print(
-                "Opened Anki, but can't connect! Is AnkiConnect working?"
-            )
-            return False
-        else:
-            print("Opened and connected to Anki successfully!")
-            return True
-    else:
-        print(
-            "Must provide both Anki Path and Anki Profile",
-            "in order to open Anki automatically"
-        )
-        return False
-
-
 def main():
     """Main functionality of script."""
     if not os.path.exists(CONFIG_PATH):
@@ -220,10 +178,12 @@ def main():
 class AnkiConnect:
     """Namespace for AnkiConnect functions."""
 
+    @staticmethod
     def request(action, **params):
         """Format action and parameters into Ankiconnect style."""
         return {'action': action, 'params': params, 'version': 6}
 
+    @staticmethod
     def invoke(action, **params):
         """Do the action with the specified parameters."""
         requestJson = json.dumps(
@@ -233,6 +193,7 @@ class AnkiConnect:
             urllib.request.Request('http://localhost:8765', requestJson)))
         return AnkiConnect.parse(response)
 
+    @staticmethod
     def parse(response):
         """Parse the received response."""
         if len(response) != 2:
@@ -247,31 +208,31 @@ class AnkiConnect:
 
 
 class FormatConverter:
-    """Converting Obsidian formatting to Anki formatting."""
+    """Converting Markdown formatting to Anki formatting."""
 
-    OBS_INLINE_MATH_REGEXP = re.compile(
+    MKD_INLINE_MATH_REGEXP = re.compile(
         r"(?<!\$)\$(?=[\S])(?=[^$])[\s\S]*?\S\$"
     )
-    OBS_DISPLAY_MATH_REGEXP = re.compile(r"\$\$[\s\S]*?\$\$")
+    MKD_BLOCK_MATH_REGEXP = re.compile(r"\$\$[\s\S]*?\$\$")
 
-    OBS_CODE_REGEXP = re.compile(
+    MKD_INLINE_CODE_REGEXP = re.compile(
         r"(?<!`)`(?=[^`])[\s\S]*?`"
     )
-    OBS_DISPLAY_CODE_REGEXP = re.compile(
+    MKD_BLOCK_CODE_REGEXP = re.compile(
         r"```[\s\S]*?```"
     )
 
     ANKI_INLINE_START = r"\("
     ANKI_INLINE_END = r"\)"
 
-    ANKI_DISPLAY_START = r"\["
-    ANKI_DISPLAY_END = r"\]"
+    ANKI_BLOCK_START = r"\["
+    ANKI_BLOCK_END = r"\]"
 
     ANKI_MATH_REGEXP = re.compile(r"(\\\[[\s\S]*?\\\])|(\\\([\s\S]*?\\\))")
 
-    MATH_REPLACE = "OBSTOANKIMATH"
-    INLINE_CODE_REPLACE = "OBSTOANKICODEINLINE"
-    DISPLAY_CODE_REPLACE = "OBSTOANKICODEDISPLAY"
+    MATH_REPLACE = "MKDTOANKIMATH"
+    INLINE_CODE_REPLACE = "MKDTOANKICODEINLINE"
+    BLOCK_CODE_REPLACE = "MKDTOANKICODEBLOCK"
 
     IMAGE_REGEXP = re.compile(r'<img alt=".*?" src="(.*?)"')
     SOUND_REGEXP = re.compile(r'\[sound:(.+)\]')
@@ -286,15 +247,6 @@ class FormatConverter:
     CLOZE_UNSET_NUM = 1
 
     @staticmethod
-    def format_note_with_url(note, url):
-        for key in note["fields"]:
-            note["fields"][key] += "<br>" + "".join([
-                '<a',
-                ' href="{}" class="obsidian-link">Obsidian</a>'.format(url)
-            ])
-            break  # So only does first field
-
-    @staticmethod
     def format_note_with_frozen_fields(note, frozen_fields_dict):
         for field in note["fields"].keys():
             note["fields"][field] += frozen_fields_dict[
@@ -303,9 +255,9 @@ class FormatConverter:
 
     @staticmethod
     def inline_anki_repl(matchobject):
-        """Get replacement string for Obsidian-formatted inline math."""
+        """Get replacement string for Markdown-formatted inline math."""
         found_string = matchobject.group(0)
-        # Strip Obsidian formatting by removing first and last characters
+        # Strip Markdown formatting by removing first and last characters
         found_string = found_string[1:-1]
         # Add Anki formatting
         result = FormatConverter.ANKI_INLINE_START + found_string
@@ -313,23 +265,23 @@ class FormatConverter:
         return result
 
     @staticmethod
-    def display_anki_repl(matchobject):
-        """Get replacement string for Obsidian-formatted display math."""
+    def block_anki_repl(matchobject):
+        """Get replacement string for Markdown-formatted block math."""
         found_string = matchobject.group(0)
-        # Strip Obsidian formatting by removing first two and last two chars
+        # Strip Markdown formatting by removing first two and last two chars
         found_string = found_string[2:-2]
         # Add Anki formatting
-        result = FormatConverter.ANKI_DISPLAY_START + found_string
-        result += FormatConverter.ANKI_DISPLAY_END
+        result = FormatConverter.ANKI_BLOCK_START + found_string
+        result += FormatConverter.ANKI_BLOCK_END
         return result
 
     @staticmethod
-    def obsidian_to_anki_math(note_text):
-        """Convert Obsidian-formatted math to Anki-formatted math."""
-        return FormatConverter.OBS_INLINE_MATH_REGEXP.sub(
+    def markdown_to_anki_math(note_text):
+        """Convert Markdown-formatted math to Anki-formatted math."""
+        return FormatConverter.MKD_INLINE_MATH_REGEXP.sub(
             FormatConverter.inline_anki_repl,
-            FormatConverter.OBS_DISPLAY_MATH_REGEXP.sub(
-                FormatConverter.display_anki_repl, note_text
+            FormatConverter.MKD_BLOCK_MATH_REGEXP.sub(
+                FormatConverter.block_anki_repl, note_text
             )
         )
 
@@ -358,7 +310,7 @@ class FormatConverter:
 
     @staticmethod
     def markdown_parse(text):
-        """Apply markdown conversions to text."""
+        """Apply Markdown conversions to text."""
         text = md_parser.reset().convert(text)
         return text
 
@@ -422,7 +374,7 @@ class FormatConverter:
     @staticmethod
     def format(note_text, cloze=False):
         """Apply all format conversions to note_text."""
-        note_text = FormatConverter.obsidian_to_anki_math(note_text)
+        note_text = FormatConverter.markdown_to_anki_math(note_text)
         # Extract the parts that are anki math
         math_matches = [
             math_match.group(0)
@@ -431,28 +383,28 @@ class FormatConverter:
             )
         ]
         # Replace them to be later added back, so they don't interfere
-        # with markdown parsing
+        # with Markdown parsing
         note_text = FormatConverter.ANKI_MATH_REGEXP.sub(
             FormatConverter.MATH_REPLACE, note_text
         )
         # Now same with code!
         inline_code_matches = [
             code_match.group(0)
-            for code_match in FormatConverter.OBS_CODE_REGEXP.finditer(
+            for code_match in FormatConverter.MKD_INLINE_CODE_REGEXP.finditer(
                 note_text
             )
         ]
-        note_text = FormatConverter.OBS_CODE_REGEXP.sub(
+        note_text = FormatConverter.MKD_INLINE_CODE_REGEXP.sub(
             FormatConverter.INLINE_CODE_REPLACE, note_text
         )
-        display_code_matches = [
+        block_code_matches = [
             code_match.group(0)
-            for code_match in FormatConverter.OBS_DISPLAY_CODE_REGEXP.finditer(
+            for code_match in FormatConverter.MKD_BLOCK_CODE_REGEXP.finditer(
                 note_text
             )
         ]
-        note_text = FormatConverter.OBS_DISPLAY_CODE_REGEXP.sub(
-            FormatConverter.DISPLAY_CODE_REPLACE, note_text
+        note_text = FormatConverter.MKD_BLOCK_CODE_REGEXP.sub(
+            FormatConverter.BLOCK_CODE_REPLACE, note_text
         )
         if cloze:
             note_text = FormatConverter.curly_to_cloze(note_text)
@@ -462,9 +414,9 @@ class FormatConverter:
                 code_match,
                 1
             )
-        for code_match in display_code_matches:
+        for code_match in block_code_matches:
             note_text = note_text.replace(
-                FormatConverter.DISPLAY_CODE_REPLACE,
+                FormatConverter.BLOCK_CODE_REPLACE,
                 code_match,
                 1
             )
@@ -558,12 +510,6 @@ class Note:
         template = NOTE_DICT_TEMPLATE.copy()
         template["modelName"] = self.note_type
         template["fields"] = self.fields
-        if all([
-            CONFIG_DATA["Add file link"],
-            CONFIG_DATA["Vault"],
-            url
-        ]):
-            FormatConverter.format_note_with_url(template, url)
         if frozen_fields_dict:
             FormatConverter.format_note_with_frozen_fields(
                 template, frozen_fields_dict
@@ -669,12 +615,6 @@ class RegexNote:
         template = NOTE_DICT_TEMPLATE.copy()
         template["modelName"] = self.note_type
         template["fields"] = self.fields
-        if all([
-            CONFIG_DATA["Add file link"],
-            CONFIG_DATA["Vault"],
-            url
-        ]):
-            FormatConverter.format_note_with_url(template, url)
         if frozen_fields_dict:
             FormatConverter.format_note_with_frozen_fields(
                 template, frozen_fields_dict
@@ -724,13 +664,10 @@ class Config:
     @staticmethod
     def setup_defaults(config):
         """Sets up default values in the config file, not to do with syntax."""
-        config.setdefault("Obsidian", dict())
-        config["Obsidian"].setdefault("Vault name", "")
-        config["Obsidian"].setdefault("Add file link", "False")
         config["DEFAULT"] = dict()  # Removes DEFAULT if it's there.
         config.setdefault("Defaults", dict())
         config["Defaults"].setdefault(
-            "Tag", "Obsidian_to_Anki"
+            "Tag", "Markdown_to_Anki"
         )
         config["Defaults"].setdefault(
             "Deck", "Default"
@@ -739,21 +676,13 @@ class Config:
             "CurlyCloze", "False"
         )
         config["Defaults"].setdefault(
-            "GUI", "True"
-        )
-        config["Defaults"].setdefault(
             "Regex", "False"
         )
         config["Defaults"].setdefault(
             "ID Comments", "True"
         )
-        config["Defaults"].setdefault(
-            "Anki Path", ""
-        )
-        config["Defaults"].setdefault(
-            "Anki Profile", ""
-        )
 
+    @staticmethod
     def update_config():
         """Update config with new notes."""
         print("Updating configuration file...")
@@ -815,22 +744,14 @@ class Config:
         CONFIG_DATA["CurlyCloze"] = config.getboolean(
             "Defaults", "CurlyCloze"
         )
-        CONFIG_DATA["GUI"] = config.getboolean(
-            "Defaults", "GUI"
-        )
         CONFIG_DATA["Regex"] = config.getboolean(
             "Defaults", "Regex"
         )
         CONFIG_DATA["Comment"] = config.getboolean(
             "Defaults", "ID Comments"
         )
-        CONFIG_DATA["Path"] = config["Defaults"]["Anki Path"]
-        CONFIG_DATA["Profile"] = config["Defaults"]["Anki Profile"]
-        CONFIG_DATA["Vault"] = config["Obsidian"]["Vault name"]
-        CONFIG_DATA["Add file link"] = config.getboolean(
-            "Obsidian", "Add file link"
-        )
 
+    @staticmethod
     def load_config():
         """Load from an existing config file (assuming it exists)."""
         print("Loading configuration file...")
@@ -846,6 +767,7 @@ class Config:
 class Data:
     """Class for managing the data file (not meant to be changed by users.)"""
 
+    @staticmethod
     def create_data_file():
         """Creates the data file for the script."""
         print("Creating data file...")
@@ -858,6 +780,7 @@ class Data:
         with open(DATA_PATH, "w") as f:
             json.dump(data, f)
 
+    @staticmethod
     def load_data_file():
         """Loads the data file into memory"""
         with open(DATA_PATH, "r") as f:
@@ -873,33 +796,15 @@ class App:
 
     def __init__(self):
         """Execute the main functionality of the script."""
-        try:
-            Config.load_config()
-        except Exception as e:
-            print("Error:", e)
-            print("Attempting to fix config file...")
-            Config.update_config()
-            Config.load_config()
-        try:
-            Data.load_data_file()
-        except Exception as e:
-            print("Error:", e)
+        Config.load_config()
+        if not os.path.exists(DATA_PATH):
+            print("Data file does not exist.")
             Data.create_data_file()
-            Data.load_data_file()
+        Data.load_data_file()
         self.get_fields()
         self.get_ids()
-        if CONFIG_DATA["GUI"] and GOOEY:
-            self.setup_gui_parser()
-        else:
-            self.setup_cli_parser()
+        self.setup_cli_parser()
         args = self.parser.parse_args()
-        if CONFIG_DATA["GUI"] and GOOEY:
-            if args.directory:
-                args.path = args.directory
-            elif args.file:
-                args.path = args.file
-            else:
-                args.path = False
         no_args = True
         if args.update:
             no_args = False
@@ -909,10 +814,6 @@ class App:
             no_args = False
             Data.create_data_file()
         self.gen_regexp()
-        if args.config:
-            no_args = False
-            webbrowser.open(CONFIG_PATH)
-            return
         if args.path:
             no_args = False
             current = os.getcwd()
@@ -958,8 +859,9 @@ class App:
                     "getTags"
                 )
             )
-            print("Adding media with these filenames...")
-            print(list(MEDIA.keys()))
+            if len(MEDIA) > 0:
+                print("Adding media with these filenames...")
+                print(list(MEDIA.keys()))
             requests.append(self.get_add_media())
             print("Adding directory requests...")
             for directory in directories:
@@ -996,12 +898,6 @@ class App:
     def setup_parser_optionals(self):
         """Set up optional arguments for the parser."""
         self.parser.add_argument(
-            "-c", "--config",
-            action="store_true",
-            dest="config",
-            help="Open up config file for editing."
-        )
-        self.parser.add_argument(
             "-u", "--update",
             action="store_true",
             dest="update",
@@ -1027,32 +923,8 @@ class App:
             help="Recursively scan subfolders."
         )
 
-    if GOOEY:
-        @ gooey.Gooey(use_cmd_args=True)
-        def setup_gui_parser(self):
-            """Set up the GUI argument parser."""
-            self.parser = gooey.GooeyParser(
-                description="Add cards to Anki from a markdown or text file."
-            )
-            path_group = self.parser.add_mutually_exclusive_group(
-                required=False
-            )
-            path_group.add_argument(
-                "-f", "--file",
-                help="Choose a file to scan.",
-                dest="file",
-                widget='FileChooser'
-            )
-            path_group.add_argument(
-                "-d", "--dir",
-                help="Choose a directory to scan.",
-                dest="directory",
-                widget='DirChooser'
-            )
-            self.setup_parser_optionals()
-
     def setup_cli_parser(self):
-        """Setup the command-line argument parser."""
+        """Set up the command-line argument parser."""
         self.parser = argparse.ArgumentParser(
             description="Add cards to Anki from a markdown or text file."
         )
@@ -1139,12 +1011,6 @@ class App:
             )
         )
         setattr(
-            App, "VAULT_PATH_REGEXP",
-            re.compile(
-                CONFIG_DATA["Vault"] + r".*"
-            )
-        )
-        setattr(
             App, "FROZEN_REGEXP",
             re.compile(
                 CONFIG_DATA["FROZEN_LINE"] + r" - (.*?):\n((?:[^\n][\n]?)+)"
@@ -1200,12 +1066,7 @@ class File:
         """Perform initial file reading and attribute setting."""
         self.filename = filepath
         self.path = os.path.abspath(filepath)
-        if CONFIG_DATA["Vault"] and App.VAULT_PATH_REGEXP.search(self.path):
-            self.url = "obsidian://vault/{}".format(
-                App.VAULT_PATH_REGEXP.search(self.path).group()
-            ).replace("\\", "/")
-        else:
-            self.url = ""
+        self.url = ""
         with open(self.filename, encoding='utf_8') as f:
             self.file = f.read()
             self.original_file = self.file
@@ -1363,12 +1224,6 @@ class File:
                 for note in self.notes_to_add + self.inline_notes_to_add
             ]
         )
-        """
-        return AnkiConnect.request(
-            "addNotes",
-            notes=self.notes_to_add + self.inline_notes_to_add
-        )
-        """
 
     def get_delete_notes(self):
         """Get the AnkiConnect-formatted request to delete a note."""
@@ -1447,16 +1302,16 @@ class RegexFile(File):
         self.ignore_spans += spans(App.NOTE_REGEXP, self.file)
         self.ignore_spans += spans(App.INLINE_REGEXP, self.file)
         self.ignore_spans += spans(
-            FormatConverter.OBS_INLINE_MATH_REGEXP, self.file
+            FormatConverter.MKD_INLINE_MATH_REGEXP, self.file
         )
         self.ignore_spans += spans(
-            FormatConverter.OBS_DISPLAY_MATH_REGEXP, self.file
+            FormatConverter.MKD_BLOCK_MATH_REGEXP, self.file
         )
         self.ignore_spans += spans(
-            FormatConverter.OBS_CODE_REGEXP, self.file
+            FormatConverter.MKD_INLINE_CODE_REGEXP, self.file
         )
         self.ignore_spans += spans(
-            FormatConverter.OBS_DISPLAY_CODE_REGEXP, self.file
+            FormatConverter.MKD_BLOCK_CODE_REGEXP, self.file
         )
 
     def scan_file(self):
@@ -1769,9 +1624,7 @@ if __name__ == "__main__":
     try:
         wait_for_port(ANKI_PORT)
     except TimeoutError:
-        print("Couldn't connect to Anki, attempting to open Anki...")
-        if load_anki():
-            main()
+        print("Couldn't connect to Anki, please open Anki before running script again.")
     else:
         print("Connected!")
         main()
