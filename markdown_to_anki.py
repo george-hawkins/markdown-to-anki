@@ -181,6 +181,14 @@ class AnkiConnectError(Exception):
     """Raised when AnkiConnect returns an error or a malformed response."""
 
 
+class DuplicateNoteIDError(Exception):
+    """Raised when the same note ID appears more than once in the source."""
+
+
+class UnknownNoteTypeError(Exception):
+    """Raised when a note names a type that doesn't exist in Anki."""
+
+
 class AnkiConnect:
     """Namespace for AnkiConnect functions."""
 
@@ -453,6 +461,17 @@ class FormatConverter:
         return note_text
 
 
+def field_names_for(note_type) -> list:
+    """Return the Anki field names for note_type, or raise if it's unknown."""
+    try:
+        return App.FIELDS_DICT[note_type]
+    except KeyError:
+        raise UnknownNoteTypeError(
+            f"Unknown note type {note_type!r}. Your Anki note types are: "
+            f"{sorted(App.FIELDS_DICT)}."
+        ) from None
+
+
 def build_note_dict(note, deck, frozen_fields_dict=None) -> dict:
     """Build the AnkiConnect note dict shared by all note types.
 
@@ -498,7 +517,7 @@ class Note:
         else:
             self.tags = []
         self.note_type = self.lines[0]
-        self.field_names = App.FIELDS_DICT[self.note_type]
+        self.field_names = field_names_for(self.note_type)
         self.current_field = self.field_names[0]
 
     def field_from_line(self, line):
@@ -563,7 +582,7 @@ class InlineNote(Note):
             )
         self.note_type = type_match.group(1)
         self.text = self.text[type_match.end():]
-        self.field_names = App.FIELDS_DICT[self.note_type]
+        self.field_names = field_names_for(self.note_type)
         self.current_field = self.field_names[0]
 
     @property
@@ -609,7 +628,7 @@ class RegexNote:
             )
         else:
             self.tags = []
-        self.field_names = App.FIELDS_DICT[self.note_type]
+        self.field_names = field_names_for(self.note_type)
 
     @property
     def fields(self):
@@ -819,6 +838,8 @@ class App:
     TAG_REGEXP = None
     INLINE_REGEXP = None
     FROZEN_REGEXP = None
+    # Note IDs seen so far this run, to detect accidentally duplicated IDs.
+    SEEN_IDS = set()
 
     def __init__(self):
         """Execute the main functionality of the script."""
@@ -845,6 +866,7 @@ class App:
         self.gen_regexp()
         if args.path:
             no_args = False
+            App.SEEN_IDS = set()
             current = os.getcwd()
             self.path: str = args.path
             if os.path.isdir(self.path):
@@ -921,6 +943,7 @@ class App:
                     "File Hashes": App.FILE_HASHES
                 }
             )
+            self.print_summary(directories)
         if no_args:
             self.parser.print_help()
 
@@ -1039,6 +1062,39 @@ class App:
         """Get a list of the currently used card IDs."""
         App.EXISTING_IDS = AnkiConnect.invoke("findNotes", query="")
 
+    @staticmethod
+    def register_id(note_id, filename):
+        """Record a note ID seen in the source; error if it repeats.
+
+        Guards against accidentally duplicated ID comments (e.g. from copying
+        a note without removing its ID), which would otherwise be silently
+        treated as repeated updates of the same Anki note.
+        """
+        if note_id in App.SEEN_IDS:
+            raise DuplicateNoteIDError(
+                f"Note ID {note_id} appears more than once (seen again in "
+                f"{filename}). If you copied a note, remove the duplicated "
+                f"ID comment from the copy."
+            )
+        App.SEEN_IDS.add(note_id)
+
+    @staticmethod
+    def print_summary(directories):
+        """Print a one-line summary of what was added/updated/deleted."""
+        scanned_files = [
+            f for directory in directories for f in directory.files
+        ]
+        added = sum(
+            len(f.notes_to_add) + len(f.inline_notes_to_add)
+            for f in scanned_files
+        )
+        updated = sum(len(f.notes_to_edit) for f in scanned_files)
+        deleted = sum(len(f.notes_to_delete) for f in scanned_files)
+        print(
+            f"Done! {added} note(s) added, {updated} updated, "
+            f"{deleted} deleted; {len(MEDIA)} media file(s) added."
+        )
+
 
 class File:
     """Class for performing script operations at the file-level."""
@@ -1131,10 +1187,12 @@ class File:
             parsed.note["tags"] += self.global_tags.split(TAG_SEP)
             add_list.append(parsed.note)
             index_list.append(position)
-        elif parsed.id not in App.EXISTING_IDS:
-            self.warn_missing_id(parsed.id)
         else:
-            self.notes_to_edit.append(parsed)
+            App.register_id(parsed.id, self.filename)
+            if parsed.id not in App.EXISTING_IDS:
+                self.warn_missing_id(parsed.id)
+            else:
+                self.notes_to_edit.append(parsed)
 
     def scan_file(self):
         """Sort notes from file into adding vs editing."""
@@ -1359,6 +1417,7 @@ class RegexFile(File):
             if parsed is None:
                 # Cloze note had no detected clozes -- skip it.
                 continue
+            App.register_id(parsed.id, self.filename)
             if parsed.id not in App.EXISTING_IDS:
                 self.warn_missing_id(parsed.id)
             else:
@@ -1373,6 +1432,7 @@ class RegexFile(File):
             if parsed is None:
                 # Cloze note had no detected clozes -- skip it.
                 continue
+            App.register_id(parsed.id, self.filename)
             if parsed.id not in App.EXISTING_IDS:
                 self.warn_missing_id(parsed.id)
             else:

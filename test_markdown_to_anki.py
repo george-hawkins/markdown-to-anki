@@ -250,6 +250,20 @@ def test_inline_note_without_type_raises_clear_error():
         mta.InlineNote("Front: q Back: a")
 
 
+def test_unknown_note_type_raises_clear_error():
+    # A note naming a non-existent Anki type -> a clear error that names the
+    # type and lists the valid ones (rather than a bare KeyError).
+    with pytest.raises(mta.UnknownNoteTypeError) as exc:
+        mta.Note("2. All-Purpose Card\nFront: q")
+    assert "2. All-Purpose Card" in str(exc.value)
+    assert "Basic" in str(exc.value)  # lists the available note types
+
+
+def test_unknown_inline_note_type_raises_clear_error():
+    with pytest.raises(mta.UnknownNoteTypeError):
+        mta.InlineNote("[Nonexistent] Front: q")
+
+
 # --------------------------------------------------------------------------
 # RegexNote parsing (regex-mode notes)
 # --------------------------------------------------------------------------
@@ -379,6 +393,7 @@ def scan_env(tmp_path):
         r"DELETE" + mta.RegexNote.ID_REGEXP_STR
     )
     mta.App.EXISTING_IDS = [42]
+    mta.App.SEEN_IDS = set()
     return tmp_path
 
 
@@ -399,3 +414,16 @@ def test_scan_file_sorts_add_edit_delete(scan_env):
     assert [p.id for p in f.notes_to_edit] == [42]
     # A DELETE directive -> queued for deletion.
     assert f.notes_to_delete == [99]
+
+
+def test_scan_file_duplicate_id_raises(scan_env):
+    # Same ID appearing twice (e.g. a copied note whose ID wasn't removed)
+    # must raise rather than silently double-updating the original note.
+    path = scan_env / "dup.md"
+    path.write_text(
+        "START\nBasic\nFront: a\nBack: b\n<!--ID: 42-->\nEND\n"
+        "START\nBasic\nFront: copy\nBack: of b\n<!--ID: 42-->\nEND\n"
+    )
+    f = mta.File(str(path))
+    with pytest.raises(mta.DuplicateNoteIDError, match="42"):
+        f.scan_file()
