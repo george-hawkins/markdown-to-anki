@@ -17,9 +17,9 @@ import hashlib
 from typing import Any
 
 logging.basicConfig(
-    filename='markdown_to_anki_log.log',
+    filename="markdown_to_anki_log.log",
     level=logging.DEBUG,
-    format='%(asctime)s:::%(levelname)s:::%(funcName)s:::%(message)s'
+    format="%(asctime)s:::%(levelname)s:::%(funcName)s:::%(message)s"
 )
 
 MEDIA = {}
@@ -27,7 +27,7 @@ MEDIA = {}
 ID_PREFIX = "ID: "
 TAG_PREFIX = "Tags: "
 TAG_SEP = " "
-Note_and_id = collections.namedtuple('Note_and_id', ['note', 'id'])
+Note_and_id = collections.namedtuple("Note_and_id", ["note", "id"])
 NOTE_DICT_TEMPLATE: dict[str, Any] = {
     "deckName": "",
     "modelName": "",
@@ -58,18 +58,18 @@ DATA_PATH = os.path.expanduser(
 
 md_parser = markdown.Markdown(
     extensions=[
-        'fenced_code',
-        'footnotes',
-        'md_in_html',
-        'tables',
-        'nl2br',
-        'sane_lists'
+        "fenced_code",
+        "footnotes",
+        "md_in_html",
+        "tables",
+        "nl2br",
+        "sane_lists"
     ]
 )
 
 ANKI_PORT = 8765
 
-ANKI_CLOZE_REGEXP = re.compile(r'{{c\d+::[\s\S]+?}}')
+ANKI_CLOZE_REGEXP = re.compile(r"{{c\d+::[\s\S]+?}}")
 
 
 def has_clozes(text):
@@ -88,11 +88,11 @@ def write_safe(filename, contents):
 
     If write fails, a backup 'filename.bak' will still exist.
     """
-    with open(f"{filename}.tmp", "w", encoding='utf_8') as temp:
+    with open(f"{filename}.tmp", "w", encoding="utf_8") as temp:
         temp.write(contents)
     os.rename(filename, f"{filename}.bak")
     os.rename(f"{filename}.tmp", filename)
-    with open(filename, encoding='utf_8') as f:
+    with open(filename, encoding="utf_8") as f:
         success = (f.read() == contents)
     if success:
         os.remove(f"{filename}.bak")
@@ -121,8 +121,8 @@ def string_insert(string, position_inserts):
 
 def file_encode(filepath):
     """Encode the file as base 64."""
-    with open(filepath, 'rb') as f:
-        return base64.b64encode(f.read()).decode('utf-8')
+    with open(filepath, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
 
 
 def spans(pattern, string):
@@ -147,7 +147,7 @@ def find_ignore(pattern, string, ignore_spans):
     )
 
 
-def wait_for_port(port, host='localhost', timeout=5.0):
+def wait_for_port(port, host="localhost", timeout=5.0):
     """Wait until a port starts accepting TCP connections.
     Args:
         port (int): Port number.
@@ -166,8 +166,8 @@ def wait_for_port(port, host='localhost', timeout=5.0):
             time.sleep(0.01)
             if time.perf_counter() - start_time >= timeout:
                 raise TimeoutError(
-                    f'Waited too long for the port {port} on host {host} to '
-                    'start accepting connections.'
+                    f"Waited too long for the port {port} on host {host} to "
+                    "start accepting connections."
                 ) from ex
 
 
@@ -196,17 +196,17 @@ class AnkiConnect:
     @staticmethod
     def request(action, **params):
         """Format action and parameters into AnkiConnect style."""
-        return {'action': action, 'params': params, 'version': 6}
+        return {"action": action, "params": params, "version": 6}
 
     @staticmethod
     def invoke(action, **params):
         """Do the action with the specified parameters."""
         request_json = json.dumps(
             AnkiConnect.request(action, **params)
-        ).encode('utf-8')
+        ).encode("utf-8")
         response = json.load(urllib.request.urlopen(
             urllib.request.Request(
-                f'http://localhost:{ANKI_PORT}', request_json
+                f"http://localhost:{ANKI_PORT}", request_json
             )
         ))
         return AnkiConnect.parse(response)
@@ -215,14 +215,14 @@ class AnkiConnect:
     def parse(response):
         """Parse the received response."""
         if len(response) != 2:
-            raise AnkiConnectError('response has an unexpected number of fields')
-        if 'error' not in response:
-            raise AnkiConnectError('response is missing required error field')
-        if 'result' not in response:
-            raise AnkiConnectError('response is missing required result field')
-        if response['error'] is not None:
-            raise AnkiConnectError(response['error'])
-        return response['result']
+            raise AnkiConnectError("response has an unexpected number of fields")
+        if "error" not in response:
+            raise AnkiConnectError("response is missing required error field")
+        if "result" not in response:
+            raise AnkiConnectError("response is missing required result field")
+        if response["error"] is not None:
+            raise AnkiConnectError(response["error"])
+        return response["result"]
 
 
 class FormatConverter:
@@ -254,13 +254,13 @@ class FormatConverter:
     BLOCK_CODE_REPLACE = "MKDTOANKICODEBLOCK"
 
     IMAGE_REGEXP = re.compile(r'<img alt=".*?" src="(.*?)"')
-    SOUND_REGEXP = re.compile(r'\[sound:(.+)]')
+    SOUND_REGEXP = re.compile(r"\[sound:(.+)]")
     # {...} not touching another brace; optional "c?N:" / "c?N|" number prefix
     # (group 1); body (group 2) may span single newlines but not blank lines.
     CLOZE_REGEXP = re.compile(
-        r'(?<!{){(?:c?(\d+)[:|])?(?!{)((?:[^\n]\n?)+?)(?<!})}(?!})'
+        r"(?<!{){(?:c?(\d+)[:|])?(?!{)((?:[^\n]\n?)+?)(?<!})}(?!})"
     )
-    URL_REGEXP = re.compile(r'https?://')
+    URL_REGEXP = re.compile(r"https?://")
 
     PARA_OPEN = "<p>"
     PARA_CLOSE = "</p>"
@@ -730,14 +730,14 @@ class Config:
         config.optionxform = str
         if os.path.exists(CONFIG_PATH):
             print("Config file exists, reading...")
-            config.read(CONFIG_PATH, encoding='utf-8-sig')
+            config.read(CONFIG_PATH, encoding="utf-8-sig")
         note_types = AnkiConnect.invoke("modelNames")
         set_default(config, "Custom Regexps")
         for note in note_types:
             config["Custom Regexps"].setdefault(note, "")
         Config.setup_syntax(config)
         Config.setup_defaults(config)
-        with open(CONFIG_PATH, "w", encoding='utf_8') as configfile:
+        with open(CONFIG_PATH, "w", encoding="utf_8") as configfile:
             config.write(configfile)
         print("Configuration file updated!")
 
@@ -792,7 +792,7 @@ class Config:
         print("Loading configuration file...")
         config = configparser.ConfigParser()
         config.optionxform = str  # Allows for case sensitivity
-        config.read(CONFIG_PATH, encoding='utf-8-sig')
+        config.read(CONFIG_PATH, encoding="utf-8-sig")
         Config.load_syntax(config)
         Config.load_defaults(config)
         CONFIG_DATA["CUSTOM_REGEXPS"] = config["Custom Regexps"]
@@ -1106,7 +1106,7 @@ class File:
         """Perform initial file reading and attribute setting."""
         self.filename = filepath
         self.path = os.path.abspath(filepath)
-        with open(self.filename, encoding='utf_8') as f:
+        with open(self.filename, encoding="utf_8") as f:
             self.file = f.read()
             self.original_file = self.file
         # Populated later by setup_*()/scan_file() and the Directory pipeline.
@@ -1159,7 +1159,7 @@ class File:
 
     @property
     def hash(self):
-        return hashlib.sha256(self.file.encode('utf-8')).hexdigest()
+        return hashlib.sha256(self.file.encode("utf-8")).hexdigest()
 
     def _begin_scan(self):
         """Log, load file-level config, and reset the per-scan note lists."""
@@ -1520,7 +1520,7 @@ class Directory:
                             )[1] in App.SUPPORTED_EXTS
                         ], key=lambda f: [
                             int(part) if part.isdigit() else part.lower()
-                            for part in re.split(r'(\d+)', f.filename)]
+                            for part in re.split(r"(\d+)", f.filename)]
                     )
             files_changed = []
             for file in self.files:
