@@ -352,3 +352,44 @@ def test_sound_regexp_matches_and_captures_path():
 def test_fix_audio_src_rewrites_to_basename():
     out = mta.FormatConverter.fix_audio_src("[sound:path/to/clip.mp3]")
     assert out == "[sound:clip.mp3]"
+
+
+# --------------------------------------------------------------------------
+# File.scan_file (exercises the refactored _begin_scan/_dispatch_note/
+# _scan_for_deletes helpers end-to-end on a real file)
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def scan_env(tmp_path):
+    """Configure the App-level regexes/state that File.scan_file() reads."""
+    mta.App.NOTE_REGEXP = re.compile(
+        r"^START\n([\s\S]*?\n)END\n?", re.MULTILINE
+    )
+    mta.App.INLINE_REGEXP = re.compile(r"STARTI(.*?)ENDI")
+    mta.App.DECK_REGEXP = re.compile(r"^TARGET DECK(?:\n|: )(.*)", re.MULTILINE)
+    mta.App.TAG_REGEXP = re.compile(r"^FILE TAGS(?:\n|: )(.*)", re.MULTILINE)
+    mta.App.FROZEN_REGEXP = re.compile(r"FROZEN - (.*?):\n((?:[^\n]\n?)+)")
+    mta.RegexFile.EMPTY_REGEXP = re.compile(
+        r"DELETE" + mta.RegexNote.ID_REGEXP_STR
+    )
+    mta.App.EXISTING_IDS = [42]
+    return tmp_path
+
+
+def test_scan_file_sorts_add_edit_delete(scan_env):
+    path = scan_env / "deck.md"
+    path.write_text(
+        "START\nBasic\nFront: new\nBack: card\nEND\n"
+        "START\nBasic\nFront: old\nBack: card\n<!--ID: 42-->\nEND\n"
+        "DELETE\n<!--ID: 99-->\n"
+    )
+    f = mta.File(str(path))
+    f.scan_file()
+    # A brand-new note (no id) -> add, with its insertion position recorded.
+    assert len(f.notes_to_add) == 1
+    assert f.notes_to_add[0]["fields"] == {"Front": "new", "Back": "card"}
+    assert len(f.id_indexes) == 1
+    # A note carrying an existing id -> edit.
+    assert [p.id for p in f.notes_to_edit] == [42]
+    # A DELETE directive -> queued for deletion.
+    assert f.notes_to_delete == [99]

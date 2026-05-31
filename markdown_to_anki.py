@@ -13,6 +13,7 @@ import time
 import socket
 import logging
 import hashlib
+from typing import Any
 
 logging.basicConfig(
     filename='markdown_to_anki_log.log',
@@ -26,7 +27,7 @@ ID_PREFIX = "ID: "
 TAG_PREFIX = "Tags: "
 TAG_SEP = " "
 Note_and_id = collections.namedtuple('Note_and_id', ['note', 'id'])
-NOTE_DICT_TEMPLATE = {
+NOTE_DICT_TEMPLATE: dict[str, Any] = {
     "deckName": "",
     "modelName": "",
     "fields": {},
@@ -245,7 +246,7 @@ class FormatConverter:
 
     IMAGE_REGEXP = re.compile(r'<img alt=".*?" src="(.*?)"')
     SOUND_REGEXP = re.compile(r'\[sound:(.+)]')
-    # {..} not touching another brace; optional "c?N:" / "c?N|" number prefix
+    # {...} not touching another brace; optional "c?N:" / "c?N|" number prefix
     # (group 1); body (group 2) may span single newlines but not blank lines.
     CLOZE_REGEXP = re.compile(
         r'(?<!{){(?:c?(\d+)[:|])?(?!{)((?:[^\n]\n?)+?)(?<!})}(?!})'
@@ -452,6 +453,23 @@ class FormatConverter:
         return note_text
 
 
+def build_note_dict(note, deck, frozen_fields_dict=None) -> dict:
+    """Build the AnkiConnect note dict shared by all note types.
+
+    `note` is any object exposing note_type, fields and tags.
+    """
+    template = NOTE_DICT_TEMPLATE.copy()
+    template["modelName"] = note.note_type
+    template["fields"] = note.fields
+    if frozen_fields_dict:
+        FormatConverter.format_note_with_frozen_fields(
+            template, frozen_fields_dict
+        )
+    template["tags"] = template["tags"] + note.tags
+    template["deckName"] = deck
+    return template
+
+
 class Note:
     """Manages parsing notes into a dictionary formatted for AnkiConnect.
 
@@ -511,17 +529,9 @@ class Note:
         }
         return {key: value.strip() for key, value in fields.items()}
 
-    def parse(self, deck, frozen_fields_dict=None):
+    def parse(self, deck, frozen_fields_dict=None) -> Note_and_id:
         """Get a properly formatted dictionary of the note."""
-        template = NOTE_DICT_TEMPLATE.copy()
-        template["modelName"] = self.note_type
-        template["fields"] = self.fields
-        if frozen_fields_dict:
-            FormatConverter.format_note_with_frozen_fields(
-                template, frozen_fields_dict
-            )
-        template["tags"] = template["tags"] + self.tags
-        template["deckName"] = deck
+        template = build_note_dict(self, deck, frozen_fields_dict)
         return Note_and_id(note=template, id=self.identifier)
 
 
@@ -614,17 +624,9 @@ class RegexNote:
         }
         return {key: value.strip() for key, value in fields.items()}
 
-    def parse(self, deck, frozen_fields_dict=None):
+    def parse(self, deck, frozen_fields_dict=None) -> Note_and_id | None:
         """Get a properly formatted dictionary of the note."""
-        template = NOTE_DICT_TEMPLATE.copy()
-        template["modelName"] = self.note_type
-        template["fields"] = self.fields
-        if frozen_fields_dict:
-            FormatConverter.format_note_with_frozen_fields(
-                template, frozen_fields_dict
-            )
-        template["tags"] = template["tags"] + self.tags
-        template["deckName"] = deck
+        template = build_note_dict(self, deck, frozen_fields_dict)
         if "Cloze" in self.note_type and CONFIG_DATA[
             "CurlyCloze"
         ] and not note_has_clozes(template):
@@ -1097,8 +1099,8 @@ class File:
     def hash(self):
         return hashlib.sha256(self.file.encode('utf-8')).hexdigest()
 
-    def scan_file(self):
-        """Sort notes from file into adding vs editing."""
+    def _begin_scan(self):
+        """Log, load file-level config, and reset the per-scan note lists."""
         logging.info(f"Scanning file {self.filename} for notes...")
         self.setup_frozen_fields_dict()
         self.setup_target_deck()
@@ -1109,21 +1111,37 @@ class File:
         self.notes_to_delete = []
         self.inline_notes_to_add = []
         self.inline_id_indexes = []
+        self.ignore_spans = []
+
+    def _scan_for_deletes(self):
+        """Record the ids of notes marked for deletion in the file."""
+        for match in RegexFile.EMPTY_REGEXP.finditer(self.file):
+            self.notes_to_delete.append(int(match.group(1)))
+
+    def _dispatch_note(self, parsed, position, add_list, index_list):
+        """Sort a parsed note into add/edit, or warn if its id is unknown."""
+        if parsed.id is None:
+            # Need to make sure global_tags get added.
+            parsed.note["tags"] += self.global_tags.split(TAG_SEP)
+            add_list.append(parsed.note)
+            index_list.append(position)
+        elif parsed.id not in App.EXISTING_IDS:
+            self.warn_missing_id(parsed.id)
+        else:
+            self.notes_to_edit.append(parsed)
+
+    def scan_file(self):
+        """Sort notes from file into adding vs editing."""
+        self._begin_scan()
         for note_match in App.NOTE_REGEXP.finditer(self.file):
             note, position = note_match.group(1), note_match.end(1)
             parsed = Note(note).parse(
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
-            if parsed.id is None:
-                # Need to make sure global_tags get added.
-                parsed.note["tags"] += self.global_tags.split(TAG_SEP)
-                self.notes_to_add.append(parsed.note)
-                self.id_indexes.append(position)
-            elif parsed.id not in App.EXISTING_IDS:
-                self.warn_missing_id(parsed.id)
-            else:
-                self.notes_to_edit.append(parsed)
+            self._dispatch_note(
+                parsed, position, self.notes_to_add, self.id_indexes
+            )
         for inline_note_match in App.INLINE_REGEXP.finditer(self.file):
             note = inline_note_match.group(1)
             position = inline_note_match.end(1)
@@ -1131,20 +1149,11 @@ class File:
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
-            if parsed.id is None:
-                # Need to make sure global_tags get added.
-                parsed.note["tags"] += self.global_tags.split(TAG_SEP)
-                self.inline_notes_to_add.append(parsed.note)
-                self.inline_id_indexes.append(position)
-            elif parsed.id not in App.EXISTING_IDS:
-                self.warn_missing_id(parsed.id)
-            else:
-                self.notes_to_edit.append(parsed)
-        # Finally, scan for deleting notes
-        for match in RegexFile.EMPTY_REGEXP.finditer(self.file):
-            self.notes_to_delete.append(
-                int(match.group(1))
+            self._dispatch_note(
+                parsed, position,
+                self.inline_notes_to_add, self.inline_id_indexes
             )
+        self._scan_for_deletes()
 
     @staticmethod
     def id_to_str(note_id, inline=False, comment=False):
@@ -1301,27 +1310,14 @@ class RegexFile(File):
 
     def scan_file(self):
         """Sort notes from file into adding vs editing."""
-        logging.info(f"Scanning file {self.filename} for notes...")
-        self.setup_frozen_fields_dict()
-        self.setup_target_deck()
-        self.setup_global_tags()
-        self.ignore_spans = []
-        # The above ensures that the script won't match a RegexNote inside
-        # a Note or InlineNote
-        self.notes_to_add = []
-        self.id_indexes = []
-        self.notes_to_edit = []
-        self.notes_to_delete = []
-        self.inline_notes_to_add = []  # To avoid overriding get_add_notes
+        self._begin_scan()
+        # add_spans_to_ignore() ensures the script won't match a RegexNote
+        # inside a Note or InlineNote.
         self.add_spans_to_ignore()
         for note_type, regexp in CONFIG_DATA["CUSTOM_REGEXPS"].items():
             if regexp:
                 self.search(note_type, regexp)
-        # Finally, scan for deleting notes
-        for match in RegexFile.EMPTY_REGEXP.finditer(self.file):
-            self.notes_to_delete.append(
-                int(match.group(1))
-            )
+        self._scan_for_deletes()
 
     def search(self, note_type, regexp):
         """
