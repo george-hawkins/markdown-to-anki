@@ -287,3 +287,68 @@ def test_anki_parse_raises_on_error():
 def test_anki_parse_raises_on_malformed_response():
     with pytest.raises(mta.AnkiConnectError):
         mta.AnkiConnect.parse({"result": 1})  # missing 'error' field
+
+
+# --------------------------------------------------------------------------
+# Regex edge cases / guards
+#
+# These pin down behaviors that the trickier regexes are responsible for, so
+# that simplifying those patterns cannot silently change matching.
+# --------------------------------------------------------------------------
+
+def md_math(text):
+    return mta.FormatConverter.markdown_to_anki_math(text)
+
+
+def test_inline_math_requires_nonspace_after_dollar():
+    # The opening "$" must be followed by a non-space, non-"$" char, so a
+    # leading space means it is NOT treated as inline math.
+    assert md_math("$ x$") == "$ x$"
+
+
+def test_inline_math_not_triggered_by_double_dollar_opener():
+    # "$$" must not be picked up as an inline-math opener.
+    assert md_math("$$y=z$$") == r"\[y=z\]"
+
+
+def test_two_adjacent_inline_math_spans():
+    assert md_math("$a$ $b$") == r"\(a\) \(b\)"
+
+
+def test_inline_math_single_char_body():
+    assert md_math("$x$") == r"\(x\)"
+
+
+def test_curly_to_cloze_leaves_existing_anki_cloze_untouched():
+    # The {{ / }} guards must stop an already-formatted cloze from being
+    # wrapped a second time.
+    assert mta.FormatConverter.curly_to_cloze("{{c1::x}}") == "{{c1::x}}"
+
+
+def test_curly_to_cloze_spans_a_single_newline():
+    assert mta.FormatConverter.curly_to_cloze("{a\nb}") == "{{c1::a\nb}}"
+
+
+def test_curly_to_cloze_explicit_pipe_separator():
+    assert mta.FormatConverter.curly_to_cloze("{3|keep}") == "{{c3::keep}}"
+
+
+def test_regexnote_id_regexp_str_captures_commented_id():
+    pat = re.compile(r"DELETE" + mta.RegexNote.ID_REGEXP_STR)
+    assert pat.search("DELETE\n<!--ID: 123-->").group(1) == "123"
+
+
+def test_regexnote_id_regexp_str_captures_plain_id():
+    pat = re.compile(r"DELETE" + mta.RegexNote.ID_REGEXP_STR)
+    assert pat.search("DELETE\nID: 456").group(1) == "456"
+
+
+def test_sound_regexp_matches_and_captures_path():
+    m = mta.FormatConverter.SOUND_REGEXP.search("see [sound:clip.mp3] here")
+    assert m.group(0) == "[sound:clip.mp3]"
+    assert m.group(1) == "clip.mp3"
+
+
+def test_fix_audio_src_rewrites_to_basename():
+    out = mta.FormatConverter.fix_audio_src("[sound:path/to/clip.mp3]")
+    assert out == "[sound:clip.mp3]"

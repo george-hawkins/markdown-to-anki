@@ -218,8 +218,9 @@ class AnkiConnect:
 class FormatConverter:
     """Converting Markdown formatting to Anki formatting."""
 
+    # $...$ not preceded by $; body starts non-space/non-$, ends non-space.
     MKD_INLINE_MATH_REGEXP = re.compile(
-        r"(?<!\$)\$(?=[\S])(?=[^$])[\s\S]*?\S\$"
+        r"(?<!\$)\$(?=[^\s$])[\s\S]*?\S\$"
     )
     MKD_BLOCK_MATH_REGEXP = re.compile(r"\$\$[\s\S]*?\$\$")
 
@@ -236,16 +237,18 @@ class FormatConverter:
     ANKI_BLOCK_START = r"\["
     ANKI_BLOCK_END = r"\]"
 
-    ANKI_MATH_REGEXP = re.compile(r"(\\\[[\s\S]*?\\\])|(\\\([\s\S]*?\\\))")
+    ANKI_MATH_REGEXP = re.compile(r"\\\[[\s\S]*?\\]|\\\([\s\S]*?\\\)")
 
     MATH_REPLACE = "MKDTOANKIMATH"
     INLINE_CODE_REPLACE = "MKDTOANKICODEINLINE"
     BLOCK_CODE_REPLACE = "MKDTOANKICODEBLOCK"
 
     IMAGE_REGEXP = re.compile(r'<img alt=".*?" src="(.*?)"')
-    SOUND_REGEXP = re.compile(r'\[sound:(.+)\]')
+    SOUND_REGEXP = re.compile(r'\[sound:(.+)]')
+    # {..} not touching another brace; optional "c?N:" / "c?N|" number prefix
+    # (group 1); body (group 2) may span single newlines but not blank lines.
     CLOZE_REGEXP = re.compile(
-        r'(?:(?<!{){(?:c?(\d+)[:|])?(?!{))((?:[^\n][\n]?)+?)(?:(?<!})}(?!}))'
+        r'(?<!{){(?:c?(\d+)[:|])?(?!{)((?:[^\n]\n?)+?)(?<!})}(?!})'
     )
     URL_REGEXP = re.compile(r'https?://')
 
@@ -530,7 +533,7 @@ class InlineNote(Note):
 
     # ID_REGEXP is inherited from Note (identical pattern).
     TAG_REGEXP = re.compile(TAG_PREFIX + r"(.*)")
-    TYPE_REGEXP = re.compile(r"\[(.*?)\]")  # So e.g. [Basic]
+    TYPE_REGEXP = re.compile(r"\[(.*?)]")  # So e.g. [Basic]
 
     def __init__(self, note_text):
         self.text = note_text.strip()
@@ -576,7 +579,7 @@ class InlineNote(Note):
 
 
 class RegexNote:
-    ID_REGEXP_STR = r"\n?(?:<!--)?(?:" + ID_PREFIX + r"(\d+).*)"
+    ID_REGEXP_STR = r"\n?(?:<!--)?" + ID_PREFIX + r"(\d+).*"
     TAG_REGEXP_STR = r"(" + TAG_PREFIX + r".*)"
 
     def __init__(self, matchobject, note_type, tags=False, id=False):
@@ -989,7 +992,7 @@ class App:
         setattr(
             App, "FROZEN_REGEXP",
             re.compile(
-                CONFIG_DATA["FROZEN_LINE"] + r" - (.*?):\n((?:[^\n][\n]?)+)"
+                CONFIG_DATA["FROZEN_LINE"] + r" - (.*?):\n((?:[^\n]\n?)+)"
             )
         )
 
@@ -1389,7 +1392,7 @@ class RegexFile(File):
     def fix_newline_ids(self):
         """Removes double newline then ids from self.file."""
         double_regexp = re.compile(
-            r"(\r\n|\r|\n){2}(?:<!--)?" + ID_PREFIX + r"\d+"
+            r"(?:\r\n|\r|\n){2}(?:<!--)?" + ID_PREFIX + r"\d+"
         )
         self.file = double_regexp.sub(
             lambda x: x.group()[1:],
