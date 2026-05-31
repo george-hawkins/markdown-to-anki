@@ -638,13 +638,18 @@ class RegexNote:
         return Note_and_id(note=template, id=self.identifier)
 
 
+def set_default(config, section):
+    if section not in config:
+        config[section] = {}
+
+
 class Config:
     """Deals with saving and loading the configuration file."""
 
     @staticmethod
     def setup_syntax(config):
         """Sets up default syntax in the config object."""
-        config.setdefault("Syntax", {})
+        set_default(config, "Syntax")
         config["Syntax"].setdefault(
             "Begin Note", "START"
         )
@@ -674,7 +679,7 @@ class Config:
     def setup_defaults(config):
         """Sets up default values in the config file, not to do with syntax."""
         config["DEFAULT"] = {}  # Removes DEFAULT if it's there.
-        config.setdefault("Defaults", {})
+        set_default(config, "Defaults")
         config["Defaults"].setdefault(
             "Tag", "Markdown_to_Anki"
         )
@@ -701,7 +706,7 @@ class Config:
             print("Config file exists, reading...")
             config.read(CONFIG_PATH, encoding='utf-8-sig')
         note_types = AnkiConnect.invoke("modelNames")
-        config.setdefault("Custom Regexps", {})
+        set_default(config, "Custom Regexps")
         for note in note_types:
             config["Custom Regexps"].setdefault(note, "")
         Config.setup_syntax(config)
