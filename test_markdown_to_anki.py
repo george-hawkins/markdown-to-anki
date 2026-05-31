@@ -244,6 +244,12 @@ def test_inline_note_no_id_no_tags():
     assert parsed.note["fields"] == {"Front": "q", "Back": "a"}
 
 
+def test_inline_note_without_type_raises_clear_error():
+    # No [type] marker -> a clear ValueError rather than a bare AttributeError.
+    with pytest.raises(ValueError, match="missing a \\[note type\\]"):
+        mta.InlineNote("Front: q Back: a")
+
+
 # --------------------------------------------------------------------------
 # RegexNote parsing (regex-mode notes)
 # --------------------------------------------------------------------------

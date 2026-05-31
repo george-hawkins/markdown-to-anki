@@ -557,6 +557,10 @@ class InlineNote(Note):
         else:
             self.tags = []
         type_match = InlineNote.TYPE_REGEXP.search(self.text)
+        if type_match is None:
+            raise ValueError(
+                f"Inline note is missing a [note type]: {note_text!r}"
+            )
         self.note_type = type_match.group(1)
         self.text = self.text[type_match.end():]
         self.field_names = App.FIELDS_DICT[self.note_type]
@@ -842,7 +846,7 @@ class App:
         if args.path:
             no_args = False
             current = os.getcwd()
-            self.path = args.path
+            self.path: str = args.path
             if os.path.isdir(self.path):
                 os.chdir(self.path)
                 try:
@@ -1039,7 +1043,7 @@ class App:
 class File:
     """Class for performing script operations at the file-level."""
 
-    def __init__(self, filepath):
+    def __init__(self, filepath: str):
         """Perform initial file reading and attribute setting."""
         self.filename = filepath
         self.path = os.path.abspath(filepath)
@@ -1434,14 +1438,12 @@ class RegexFile(File):
 class Directory:
     """Class for managing a directory of files at a time."""
 
-    def __init__(self, abspath, regex=False, onefile=None):
+    def __init__(self, abspath: str, regex: bool = False,
+                 onefile: str | None = None):
         """Scan directory for files."""
         self.path = abspath
         self.parent = os.getcwd()
-        if regex:
-            self.file_class = RegexFile
-        else:
-            self.file_class = File
+        self.file_class: type[File] = RegexFile if regex else File
         os.chdir(self.path)
         try:
             if onefile:
