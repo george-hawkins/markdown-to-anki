@@ -541,6 +541,7 @@ class InlineNote(Note):
     TAG_REGEXP = re.compile(TAG_PREFIX + r"(.*)")
     TYPE_REGEXP = re.compile(r"\[(.*?)]")  # So e.g. [Basic]
 
+    # noinspection PyMissingConstructor
     def __init__(self, note_text):
         self.text = note_text.strip()
         id_match = InlineNote.ID_REGEXP.search(self.text)
@@ -627,6 +628,7 @@ class RegexNote:
     def parse(self, deck, frozen_fields_dict=None) -> Note_and_id | None:
         """Get a properly formatted dictionary of the note."""
         template = build_note_dict(self, deck, frozen_fields_dict)
+        # noinspection GrazieInspection
         if "Cloze" in self.note_type and CONFIG_DATA[
             "CurlyCloze"
         ] and not note_has_clozes(template):
@@ -811,7 +813,9 @@ class App:
 
     def __init__(self):
         """Execute the main functionality of the script."""
-        self.parser = None
+        self.parser = argparse.ArgumentParser(
+            description="Add cards to Anki from a markdown or text file."
+        )
         Config.load_config()
         if not os.path.exists(DATA_PATH):
             print("Data file does not exist.")
@@ -911,8 +915,14 @@ class App:
         if no_args:
             self.parser.print_help()
 
-    def setup_parser_optionals(self):
-        """Set up optional arguments for the parser."""
+    def setup_cli_parser(self):
+        """Set up the command-line argument parser."""
+        self.parser.add_argument(
+            "path",
+            default=False,
+            nargs="?",
+            help="Path to the file or directory you want to scan."
+        )
         self.parser.add_argument(
             "-u", "--update",
             action="store_true",
@@ -938,19 +948,6 @@ class App:
             dest="recurse",
             help="Recursively scan subfolders."
         )
-
-    def setup_cli_parser(self):
-        """Set up the command-line argument parser."""
-        self.parser = argparse.ArgumentParser(
-            description="Add cards to Anki from a markdown or text file."
-        )
-        self.parser.add_argument(
-            "path",
-            default=False,
-            nargs="?",
-            help="Path to the file or directory you want to scan."
-        )
-        self.setup_parser_optionals()
 
     @staticmethod
     def gen_regexp():
