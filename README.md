@@ -231,6 +231,29 @@ Back (a single word/phrase, no context): Beta
 END
 ```
 
+### Media
+
+Media that you _reference inside a note_ is uploaded automatically — this covers images and audio:
+
+* **Images** use Markdown's image syntax, e.g. `![A diagram](images/diagram.png)`.
+* **Audio** uses Anki's sound syntax, e.g. `[sound:pronunciation.mp3]`.
+
+The referenced path is resolved _relative to the Markdown file_ that contains the note. So given a card in `decks/math.md`:
+
+```
+START
+Basic
+Front: What does the diagram look like?
+Back: ![A diagram](images/diagram.png)
+END
+```
+
+The script looks for the image at `decks/images/diagram.png`. When it runs, it reads the file, uses Anki-Connect to copy it into Anki's `collection.media` folder, and then rewrites the reference in the card to use just the bare filename (`diagram.png`). Anki's `collection.media` is a single flat folder, so the subfolder you keep media in locally is purely for your own organization — and it means media filenames have to be unique (two different files both called `diagram.png` would collide).
+
+Once a file has been uploaded, its name is recorded in `markdown_to_anki_data.json` and it won't be uploaded again on later runs. If you change a file's _contents_ without renaming it, pass `-m` / `--mediaupdate` to force media to be re-uploaded.
+
+The script does not handle media files that are not part of cards, e.g. font files that you reference in card templates. You have to handle these yourself.
+
 ### Going further
 
 For lots more information, see the [getting-started section](https://github.com/ObsidianToAnki/Obsidian_to_Anki/wiki/Steps-for-new-users) of the `Obsidian_to_Anki` wiki.
