@@ -55,6 +55,46 @@ def test_string_insert_accepts_zip_iterable():
 
 
 # --------------------------------------------------------------------------
+# contained_in / find_ignore (the regex-mode ignore-span machinery)
+# --------------------------------------------------------------------------
+
+def test_contained_in_with_one_char_leeway():
+    # A span counts as contained if it sits within +/-1 char of an ignore span.
+    assert mta.contained_in((5, 9), [(5, 9)]) is True
+    assert mta.contained_in((6, 8), [(5, 9)]) is True
+    assert mta.contained_in((4, 10), [(5, 9)]) is True  # exactly 1 char over
+    # Two characters past either edge is outside the leeway.
+    assert mta.contained_in((3, 9), [(5, 9)]) is False
+    assert mta.contained_in((5, 11), [(5, 9)]) is False
+
+
+def test_contained_in_no_match():
+    assert mta.contained_in((0, 2), [(5, 9)]) is False
+    assert mta.contained_in((0, 2), []) is False
+
+
+def test_find_ignore_skips_matches_inside_ignore_spans():
+    pat = re.compile("X")
+    # Xs at positions 0, 2 and 4; ignore only the middle one.
+    found = [m.start() for m in mta.find_ignore(pat, "X-X-X", [(2, 3)])]
+    assert found == [0, 4]
+
+
+# --------------------------------------------------------------------------
+# write_safe (atomic-ish file replacement with a backup)
+# --------------------------------------------------------------------------
+
+def test_write_safe_replaces_content_and_cleans_up(tmp_path):
+    target = tmp_path / "note.md"
+    target.write_text("original")
+    mta.write_safe(str(target), "updated")
+    assert target.read_text() == "updated"
+    # On a verified success the backup and temp files are removed.
+    assert not (tmp_path / "note.md.bak").exists()
+    assert not (tmp_path / "note.md.tmp").exists()
+
+
+# --------------------------------------------------------------------------
 # has_clozes / note_has_clozes
 # --------------------------------------------------------------------------
 
@@ -220,6 +260,17 @@ def test_note_cloze_disabled_leaves_curly_untouched():
     note = mta.Note("Cloze\nText: the {answer} here")
     parsed = note.parse("D")
     assert parsed.note["fields"]["Text"] == "the {answer} here"
+
+
+def test_build_note_dict_isolates_nested_mutables():
+    # Each built note must own its "options"/"audio" rather than aliasing the
+    # module-level template (a shallow copy would share these references).
+    n1 = mta.Note("Basic\nFront: a\nBack: b").parse("D").note
+    n2 = mta.Note("Basic\nFront: c\nBack: d").parse("D").note
+    assert n1["options"] is not n2["options"]
+    assert n1["audio"] is not n2["audio"]
+    assert n1["options"] is not mta.NOTE_DICT_TEMPLATE["options"]
+    assert n1["audio"] is not mta.NOTE_DICT_TEMPLATE["audio"]
 
 
 # --------------------------------------------------------------------------

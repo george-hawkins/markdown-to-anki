@@ -1,5 +1,6 @@
 import re
 import json
+import copy
 import urllib.request
 import urllib.parse
 import configparser
@@ -477,7 +478,9 @@ def build_note_dict(note, deck, frozen_fields_dict=None) -> dict:
 
     `note` is any object exposing note_type, fields and tags.
     """
-    template = NOTE_DICT_TEMPLATE.copy()
+    # deepcopy (not .copy()) so each note gets its own "options"/"audio";
+    # a shallow copy would alias the module-level template's nested mutables.
+    template = copy.deepcopy(NOTE_DICT_TEMPLATE)
     template["modelName"] = note.note_type
     template["fields"] = note.fields
     if frozen_fields_dict:
@@ -1150,11 +1153,8 @@ class File:
     def warn_missing_id(self, note_id):
         """Warn that a note id present in the file isn't in Anki."""
         print(
-            "Warning! Note with id ",
-            note_id,
-            " in file ",
-            self.filename,
-            " does not exist in Anki!"
+            f"Warning! Note with id {note_id} in file {self.filename} "
+            "does not exist in Anki!"
         )
 
     @property
