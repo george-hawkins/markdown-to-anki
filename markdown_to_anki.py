@@ -128,11 +128,11 @@ def spans(pattern, string):
     return [match.span() for match in pattern.finditer(string)]
 
 
-def contained_in(span, spans):
-    """Return whether span is contained in spans (+- 1 leeway)"""
+def contained_in(span, span_list):
+    """Return whether span is contained in span_list (+- 1 leeway)"""
     return any(
         span[0] >= start - 1 and span[1] <= end + 1
-        for start, end in spans
+        for start, end in span_list
     )
 
 
@@ -298,13 +298,13 @@ class FormatConverter:
 
     @staticmethod
     def cloze_repl(match):
-        id, content = match.group(1), match.group(2)
-        if id is None:
+        cloze_id, content = match.group(1), match.group(2)
+        if cloze_id is None:
             result = f"{{{{c{FormatConverter.CLOZE_UNSET_NUM}::{content}}}}}"
             FormatConverter.CLOZE_UNSET_NUM += 1
             return result
         else:
-            return f"{{{{c{id}::{content}}}}}"
+            return f"{{{{c{cloze_id}::{content}}}}}"
 
     @staticmethod
     def curly_to_cloze(text):
@@ -467,11 +467,10 @@ class Note:
         """Set up useful variables."""
         self.text = note_text
         self.lines = self.text.splitlines()
-        if Note.ID_REGEXP.match(self.lines[-1]):
-            self.identifier = int(
-                Note.ID_REGEXP.match(self.lines.pop()).group(1)
-            )
-            # The above removes the identifier line, for convenience of parsing
+        id_match = Note.ID_REGEXP.match(self.lines[-1])
+        if id_match:
+            self.identifier = int(id_match.group(1))
+            self.lines.pop()  # Remove the identifier line for easier parsing.
         else:
             self.identifier = None
         if self.lines[-1].startswith(TAG_PREFIX):
@@ -534,21 +533,21 @@ class InlineNote(Note):
 
     def __init__(self, note_text):
         self.text = note_text.strip()
-        ID = InlineNote.ID_REGEXP.search(self.text)
-        if ID is not None:
-            self.identifier = int(ID.group(1))
-            self.text = self.text[:ID.start()]  # Removes identifier
+        id_match = InlineNote.ID_REGEXP.search(self.text)
+        if id_match is not None:
+            self.identifier = int(id_match.group(1))
+            self.text = self.text[:id_match.start()]  # Removes identifier
         else:
             self.identifier = None
-        TAGS = InlineNote.TAG_REGEXP.search(self.text)
-        if TAGS is not None:
-            self.tags = TAGS.group(1).split(TAG_SEP)
-            self.text = self.text[:TAGS.start()]
+        tags_match = InlineNote.TAG_REGEXP.search(self.text)
+        if tags_match is not None:
+            self.tags = tags_match.group(1).split(TAG_SEP)
+            self.text = self.text[:tags_match.start()]
         else:
             self.tags = []
-        TYPE = InlineNote.TYPE_REGEXP.search(self.text)
-        self.note_type = TYPE.group(1)
-        self.text = self.text[TYPE.end():]
+        type_match = InlineNote.TYPE_REGEXP.search(self.text)
+        self.note_type = type_match.group(1)
+        self.text = self.text[type_match.end():]
         self.field_names = App.FIELDS_DICT[self.note_type]
         self.current_field = self.field_names[0]
 
@@ -579,11 +578,11 @@ class RegexNote:
     ID_REGEXP_STR = r"\n?(?:<!--)?" + ID_PREFIX + r"(\d+).*"
     TAG_REGEXP_STR = r"(" + TAG_PREFIX + r".*)"
 
-    def __init__(self, match_object, note_type, tags=False, id=False):
+    def __init__(self, match_object, note_type, tags=False, has_id=False):
         self.match = match_object
         self.note_type = note_type
         self.groups = list(self.match.groups())
-        if id:
+        if has_id:
             # This means id is last group
             self.identifier = int(self.groups.pop())
         else:
@@ -796,8 +795,21 @@ class App:
 
     SUPPORTED_EXTS = [".md", ".txt"]
 
+    # Populated at runtime: get_fields()/get_ids() and Data.load_data_file()
+    # set the data attributes; gen_regexp() sets the regex attributes.
+    FIELDS_DICT = {}
+    EXISTING_IDS = []
+    ADDED_MEDIA = []
+    FILE_HASHES = {}
+    NOTE_REGEXP = None
+    DECK_REGEXP = None
+    TAG_REGEXP = None
+    INLINE_REGEXP = None
+    FROZEN_REGEXP = None
+
     def __init__(self):
         """Execute the main functionality of the script."""
+        self.parser = None
         Config.load_config()
         if not os.path.exists(DATA_PATH):
             print("Data file does not exist.")
@@ -820,7 +832,6 @@ class App:
             no_args = False
             current = os.getcwd()
             self.path = args.path
-            directories = []
             if os.path.isdir(self.path):
                 os.chdir(self.path)
                 try:
@@ -942,56 +953,41 @@ class App:
     @staticmethod
     def gen_regexp():
         """Generate the regular expressions used by the app."""
-        setattr(
-            App, "NOTE_REGEXP",
-            re.compile(
-                r"".join(
-                    [
-                        r"^",
-                        CONFIG_DATA["NOTE_PREFIX"],
-                        r"\n([\s\S]*?\n)",
-                        CONFIG_DATA["NOTE_SUFFIX"],
-                        r"\n?"
-                    ]
-                ), flags=re.MULTILINE
+        App.NOTE_REGEXP = re.compile(
+            r"".join(
+                [
+                    r"^",
+                    CONFIG_DATA["NOTE_PREFIX"],
+                    r"\n([\s\S]*?\n)",
+                    CONFIG_DATA["NOTE_SUFFIX"],
+                    r"\n?"
+                ]
+            ), flags=re.MULTILINE
+        )
+        App.DECK_REGEXP = re.compile(
+            "".join(
+                [
+                    r"^",
+                    CONFIG_DATA["DECK_LINE"],
+                    r"(?:\n|: )(.*)",
+                ]
+            ), flags=re.MULTILINE
+        )
+        App.TAG_REGEXP = re.compile(
+            r"^" + CONFIG_DATA["TAG_LINE"] + r"(?:\n|: )(.*)",
+            flags=re.MULTILINE
+        )
+        App.INLINE_REGEXP = re.compile(
+            "".join(
+                [
+                    CONFIG_DATA["INLINE_PREFIX"],
+                    r"(.*?)",
+                    CONFIG_DATA["INLINE_SUFFIX"]
+                ]
             )
         )
-        setattr(
-            App, "DECK_REGEXP",
-            re.compile(
-                "".join(
-                    [
-                        r"^",
-                        CONFIG_DATA["DECK_LINE"],
-                        r"(?:\n|: )(.*)",
-                    ]
-                ), flags=re.MULTILINE
-            )
-        )
-        setattr(
-            App, "TAG_REGEXP",
-            re.compile(
-                r"^" + CONFIG_DATA["TAG_LINE"] + r"(?:\n|: )(.*)",
-                flags=re.MULTILINE
-            )
-        )
-        setattr(
-            App, "INLINE_REGEXP",
-            re.compile(
-                "".join(
-                    [
-                        CONFIG_DATA["INLINE_PREFIX"],
-                        r"(.*?)",
-                        CONFIG_DATA["INLINE_SUFFIX"]
-                    ]
-                )
-            )
-        )
-        setattr(
-            App, "FROZEN_REGEXP",
-            re.compile(
-                CONFIG_DATA["FROZEN_LINE"] + r" - (.*?):\n((?:[^\n]\n?)+)"
-            )
+        App.FROZEN_REGEXP = re.compile(
+            CONFIG_DATA["FROZEN_LINE"] + r" - (.*?):\n((?:[^\n]\n?)+)"
         )
 
     @staticmethod
@@ -1022,21 +1018,18 @@ class App:
         result = AnkiConnect.invoke(
             "multi", actions=fields_request
         )
-        setattr(
-            App, "FIELDS_DICT",
-            {
-                note_type: AnkiConnect.parse(fields)
-                for note_type, fields in zip(
-                    note_types,
-                    result
-                )
-            }
-        )
+        App.FIELDS_DICT = {
+            note_type: AnkiConnect.parse(fields)
+            for note_type, fields in zip(
+                note_types,
+                result
+            )
+        }
 
     @staticmethod
     def get_ids():
         """Get a list of the currently used card IDs."""
-        setattr(App, "EXISTING_IDS", AnkiConnect.invoke("findNotes", query=""))
+        App.EXISTING_IDS = AnkiConnect.invoke("findNotes", query="")
 
 
 class File:
@@ -1049,6 +1042,21 @@ class File:
         with open(self.filename, encoding='utf_8') as f:
             self.file = f.read()
             self.original_file = self.file
+        # Populated later by setup_*()/scan_file() and the Directory pipeline.
+        self.frozen_fields_dict = {}
+        self.target_deck = ""
+        self.global_tags = ""
+        self.notes_to_add = []
+        self.inline_notes_to_add = []
+        self.notes_to_edit = []
+        self.notes_to_delete = []
+        self.id_indexes = []
+        self.inline_id_indexes = []
+        self.ignore_spans = []
+        self.cards = []
+        self.note_ids = []
+        self.card_ids = []
+        self.tags = []
 
     def setup_frozen_fields_dict(self):
         self.frozen_fields_dict = {
@@ -1139,9 +1147,9 @@ class File:
             )
 
     @staticmethod
-    def id_to_str(id, inline=False, comment=False):
+    def id_to_str(note_id, inline=False, comment=False):
         """Get the string repr of id."""
-        result = f"{ID_PREFIX}{id}"
+        result = f"{ID_PREFIX}{note_id}"
         if comment:
             result = f"<!--{result}-->"
         if inline:
@@ -1157,20 +1165,20 @@ class File:
             self.file, list(
                 zip(
                     self.id_indexes, [
-                        self.id_to_str(id, comment=CONFIG_DATA["Comment"])
-                        for id in self.note_ids[:len(self.notes_to_add)]
-                        if id is not None
+                        self.id_to_str(note_id, comment=CONFIG_DATA["Comment"])
+                        for note_id in self.note_ids[:len(self.notes_to_add)]
+                        if note_id is not None
                     ]
                 )
             ) + list(
                 zip(
                     self.inline_id_indexes, [
                         self.id_to_str(
-                            id, inline=True,
+                            note_id, inline=True,
                             comment=CONFIG_DATA["Comment"]
                         )
-                        for id in self.note_ids[len(self.notes_to_add):]
-                        if id is not None
+                        for note_id in self.note_ids[len(self.notes_to_add):]
+                        if note_id is not None
                     ]
                 )
             )
@@ -1272,6 +1280,8 @@ class File:
 
 class RegexFile(File):
 
+    EMPTY_REGEXP = None  # Set by Config.load_syntax().
+
     def add_spans_to_ignore(self):
         """Mark sections of the file as places not to expect a note."""
         self.ignore_spans += spans(App.NOTE_REGEXP, self.file)
@@ -1340,10 +1350,13 @@ class RegexFile(File):
         for match in find_ignore(regexp_tags_id, self.file, self.ignore_spans):
             # This note has id, so we update it
             self.ignore_spans.append(match.span())
-            parsed = RegexNote(match, note_type, tags=True, id=True).parse(
+            parsed = RegexNote(match, note_type, tags=True, has_id=True).parse(
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
+            if parsed is None:
+                # Cloze note had no detected clozes -- skip it.
+                continue
             if parsed.id not in App.EXISTING_IDS:
                 self.warn_missing_id(parsed.id)
             else:
@@ -1351,10 +1364,13 @@ class RegexFile(File):
         for match in find_ignore(regexp_id, self.file, self.ignore_spans):
             # This note has id, so we update it
             self.ignore_spans.append(match.span())
-            parsed = RegexNote(match, note_type, tags=False, id=True).parse(
+            parsed = RegexNote(match, note_type, tags=False, has_id=True).parse(
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
+            if parsed is None:
+                # Cloze note had no detected clozes -- skip it.
+                continue
             if parsed.id not in App.EXISTING_IDS:
                 self.warn_missing_id(parsed.id)
             else:
@@ -1362,7 +1378,7 @@ class RegexFile(File):
         for match in find_ignore(regexp_tags, self.file, self.ignore_spans):
             # This note has no id, so we add it
             self.ignore_spans.append(match.span())
-            parsed = RegexNote(match, note_type, tags=True, id=False).parse(
+            parsed = RegexNote(match, note_type, tags=True, has_id=False).parse(
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
@@ -1377,7 +1393,7 @@ class RegexFile(File):
         for match in find_ignore(regexp, self.file, self.ignore_spans):
             # This note has no id, so we update it
             self.ignore_spans.append(match.span())
-            parsed = RegexNote(match, note_type, tags=False, id=False).parse(
+            parsed = RegexNote(match, note_type, tags=False, has_id=False).parse(
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
@@ -1406,9 +1422,11 @@ class RegexFile(File):
         self.file = string_insert(
             self.file, zip(
                 self.id_indexes, [
-                    "\n" + File.id_to_str(id, comment=CONFIG_DATA["Comment"])
-                    for id in self.note_ids
-                    if id is not None
+                    "\n" + File.id_to_str(
+                        note_id, comment=CONFIG_DATA["Comment"]
+                    )
+                    for note_id in self.note_ids
+                    if note_id is not None
                 ]
             )
         )
@@ -1440,9 +1458,9 @@ class Directory:
                             if entry.is_file() and os.path.splitext(
                                 entry.path
                             )[1] in App.SUPPORTED_EXTS
-                        ], key=lambda file: [
+                        ], key=lambda f: [
                             int(part) if part.isdigit() else part.lower()
-                            for part in re.split(r'(\d+)', file.filename)]
+                            for part in re.split(r'(\d+)', f.filename)]
                     )
             files_changed = []
             for file in self.files:
