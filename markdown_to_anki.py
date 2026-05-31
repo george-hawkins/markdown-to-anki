@@ -1,6 +1,7 @@
 import re
 import json
 import urllib.request
+import urllib.parse
 import configparser
 import os
 import collections
@@ -103,7 +104,7 @@ def string_insert(string, position_inserts):
     [(0, "hi"), (3, "hello"), (5, "beep")]
     """
     offset = 0
-    position_inserts = sorted(list(position_inserts))
+    position_inserts = sorted(position_inserts)
     for position, insert_str in position_inserts:
         string = "".join(
             [
@@ -163,7 +164,7 @@ def wait_for_port(port, host='localhost', timeout=5.0):
             time.sleep(0.01)
             if time.perf_counter() - start_time >= timeout:
                 raise TimeoutError(
-                    'Waited too long for the port {} on host {} to'
+                    'Waited too long for the port {} on host {} to '
                     'start accepting connections.'.format(port, host)
                 ) from ex
 
@@ -173,6 +174,10 @@ def main():
     if not os.path.exists(CONFIG_PATH):
         Config.update_config()
     App()
+
+
+class AnkiConnectError(Exception):
+    """Raised when AnkiConnect returns an error or a malformed response."""
 
 
 class AnkiConnect:
@@ -190,20 +195,23 @@ class AnkiConnect:
             AnkiConnect.request(action, **params)
         ).encode('utf-8')
         response = json.load(urllib.request.urlopen(
-            urllib.request.Request('http://localhost:8765', requestJson)))
+            urllib.request.Request(
+                'http://localhost:{}'.format(ANKI_PORT), requestJson
+            )
+        ))
         return AnkiConnect.parse(response)
 
     @staticmethod
     def parse(response):
         """Parse the received response."""
         if len(response) != 2:
-            raise Exception('response has an unexpected number of fields')
+            raise AnkiConnectError('response has an unexpected number of fields')
         if 'error' not in response:
-            raise Exception('response is missing required error field')
+            raise AnkiConnectError('response is missing required error field')
         if 'result' not in response:
-            raise Exception('response is missing required result field')
+            raise AnkiConnectError('response is missing required result field')
         if response['error'] is not None:
-            raise Exception(response['error'])
+            raise AnkiConnectError(response['error'])
         return response['result']
 
 
@@ -459,7 +467,6 @@ class Note:
         """Set up useful variables."""
         self.text = note_text
         self.lines = self.text.splitlines()
-        self.current_field_num = 0
         if Note.ID_REGEXP.match(self.lines[-1]):
             self.identifier = int(
                 Note.ID_REGEXP.match(self.lines.pop()).group(1)
@@ -505,7 +512,7 @@ class Note:
         }
         return {key: value.strip() for key, value in fields.items()}
 
-    def parse(self, deck, url=None, frozen_fields_dict=None):
+    def parse(self, deck, frozen_fields_dict=None):
         """Get a properly formatted dictionary of the note."""
         template = NOTE_DICT_TEMPLATE.copy()
         template["modelName"] = self.note_type
@@ -521,13 +528,12 @@ class Note:
 
 class InlineNote(Note):
 
-    ID_REGEXP = re.compile(r"(?:<!--)?" + ID_PREFIX + r"(\d+)")
+    # ID_REGEXP is inherited from Note (identical pattern).
     TAG_REGEXP = re.compile(TAG_PREFIX + r"(.*)")
     TYPE_REGEXP = re.compile(r"\[(.*?)\]")  # So e.g. [Basic]
 
     def __init__(self, note_text):
         self.text = note_text.strip()
-        self.current_field_num = 0
         ID = InlineNote.ID_REGEXP.search(self.text)
         if ID is not None:
             self.identifier = int(ID.group(1))
@@ -577,7 +583,6 @@ class RegexNote:
         self.match = matchobject
         self.note_type = note_type
         self.groups = list(self.match.groups())
-        self.group_num = len(self.groups)
         if id:
             # This means id is last group
             self.identifier = int(self.groups.pop())
@@ -610,7 +615,7 @@ class RegexNote:
         }
         return {key: value.strip() for key, value in fields.items()}
 
-    def parse(self, deck, url=None, frozen_fields_dict=None):
+    def parse(self, deck, frozen_fields_dict=None):
         """Get a properly formatted dictionary of the note."""
         template = NOTE_DICT_TEMPLATE.copy()
         template["modelName"] = self.note_type
@@ -624,8 +629,9 @@ class RegexNote:
         if "Cloze" in self.note_type and CONFIG_DATA[
             "CurlyCloze"
         ] and not note_has_clozes(template):
-            return 1  # Like an error code, only for this note type
-            # Since we can accidentally recognise { in the wrong places.
+            # Skip: a Cloze note with no detected clozes. We can accidentally
+            # recognise { in the wrong places, so this guards against that.
+            return None
         return Note_and_id(note=template, id=self.identifier)
 
 
@@ -727,11 +733,6 @@ class Config:
                 config["Syntax"]["Delete Note Line"]
             ) + RegexNote.ID_REGEXP_STR
         )
-        CONFIG_DATA["EMPTY_REGEXP"] = re.compile(
-            re.escape(
-                config["Syntax"]["Delete Note Line"]
-            ) + RegexNote.ID_REGEXP_STR
-        )
         CONFIG_DATA["FROZEN_LINE"] = re.escape(
             config["Syntax"]["Frozen Fields Line"]
         )
@@ -774,6 +775,7 @@ class Data:
         with open(DATA_PATH, "w") as f:
             json.dump(dict(), f)
 
+    @staticmethod
     def update_data_file(data):
         """Updates the data file for the script with the given data."""
         print("Updating data file...")
@@ -821,23 +823,24 @@ class App:
             directories = list()
             if os.path.isdir(self.path):
                 os.chdir(self.path)
-                if args.recurse:
-                    directories = list()
-                    for root, dirs, files in os.walk(os.getcwd()):
-                        directories.append(
-                            Directory(root, regex=args.regex)
-                        )
-                        for dir in dirs:
-                            if dir.startswith("."):
-                                dirs.remove(dir)
-                                # So, ignore . folders
-                else:
-                    directories = [
-                        Directory(
-                            os.getcwd(), regex=args.regex
-                        )
-                    ]
-                os.chdir(current)
+                try:
+                    if args.recurse:
+                        directories = list()
+                        for root, dirs, files in os.walk(os.getcwd()):
+                            directories.append(
+                                Directory(root, regex=args.regex)
+                            )
+                            # Prune "." folders so os.walk skips them.
+                            # (Editing dirs while iterating skips entries.)
+                            dirs[:] = [d for d in dirs if not d.startswith(".")]
+                    else:
+                        directories = [
+                            Directory(
+                                os.getcwd(), regex=args.regex
+                            )
+                        ]
+                finally:
+                    os.chdir(current)
             else:
                 # Still need to get to directory of file for image resolving
                 # So, go to directory where file is (hopefully)
@@ -965,21 +968,6 @@ class App:
             )
         )
         setattr(
-            App, "EMPTY_REGEXP",
-            re.compile(
-                "".join(
-                    [
-                        r"^",
-                        CONFIG_DATA["NOTE_PREFIX"],
-                        r"\n(?:<!--)?",
-                        ID_PREFIX,
-                        r"[\s\S]*?\n",
-                        CONFIG_DATA["NOTE_SUFFIX"]
-                    ]
-                ), flags=re.MULTILINE
-            )
-        )
-        setattr(
             App, "TAG_REGEXP",
             re.compile(
                 r"^" + CONFIG_DATA["TAG_LINE"] + r"(?:\n|: )(.*)",
@@ -993,18 +981,6 @@ class App:
                     [
                         CONFIG_DATA["INLINE_PREFIX"],
                         r"(.*?)",
-                        CONFIG_DATA["INLINE_SUFFIX"]
-                    ]
-                )
-            )
-        )
-        setattr(
-            App, "INLINE_EMPTY_REGEXP",
-            re.compile(
-                "".join(
-                    [
-                        CONFIG_DATA["INLINE_PREFIX"],
-                        r"\s+(?:<!--)?" + ID_PREFIX + r".*?",
                         CONFIG_DATA["INLINE_SUFFIX"]
                     ]
                 )
@@ -1066,7 +1042,6 @@ class File:
         """Perform initial file reading and attribute setting."""
         self.filename = filepath
         self.path = os.path.abspath(filepath)
-        self.url = ""
         with open(self.filename, encoding='utf_8') as f:
             self.file = f.read()
             self.original_file = self.file
@@ -1096,6 +1071,16 @@ class File:
         else:
             self.global_tags = ""
 
+    def warn_missing_id(self, note_id):
+        """Warn that a note id present in the file isn't in Anki."""
+        print(
+            "Warning! Note with id ",
+            note_id,
+            " in file ",
+            self.filename,
+            " does not exist in Anki!"
+        )
+
     @property
     def hash(self):
         return hashlib.sha256(self.file.encode('utf-8')).hexdigest()
@@ -1116,7 +1101,6 @@ class File:
             note, position = note_match.group(1), note_match.end(1)
             parsed = Note(note).parse(
                 self.target_deck,
-                url=self.url,
                 frozen_fields_dict=self.frozen_fields_dict
             )
             if parsed.id is None:
@@ -1125,13 +1109,7 @@ class File:
                 self.notes_to_add.append(parsed.note)
                 self.id_indexes.append(position)
             elif parsed.id not in App.EXISTING_IDS:
-                print(
-                    "Warning! Note with id ",
-                    parsed.id,
-                    " in file ",
-                    self.filename,
-                    " does not exist in Anki!"
-                )
+                self.warn_missing_id(parsed.id)
             else:
                 self.notes_to_edit.append(parsed)
         for inline_note_match in App.INLINE_REGEXP.finditer(self.file):
@@ -1139,7 +1117,6 @@ class File:
             position = inline_note_match.end(1)
             parsed = InlineNote(note).parse(
                 self.target_deck,
-                url=self.url,
                 frozen_fields_dict=self.frozen_fields_dict
             )
             if parsed.id is None:
@@ -1148,13 +1125,7 @@ class File:
                 self.inline_notes_to_add.append(parsed.note)
                 self.inline_id_indexes.append(position)
             elif parsed.id not in App.EXISTING_IDS:
-                print(
-                    "Warning! Note with id ",
-                    parsed.id,
-                    " in file ",
-                    self.filename,
-                    " does not exist in Anki!"
-                )
+                self.warn_missing_id(parsed.id)
             else:
                 self.notes_to_edit.append(parsed)
         # Finally, scan for deleting notes
@@ -1316,7 +1287,7 @@ class RegexFile(File):
 
     def scan_file(self):
         """Sort notes from file into adding vs editing."""
-        logging.info("Scanning file" + self.filename + " for notes...")
+        logging.info("Scanning file " + self.filename + " for notes...")
         self.setup_frozen_fields_dict()
         self.setup_target_deck()
         self.setup_global_tags()
@@ -1367,17 +1338,10 @@ class RegexFile(File):
             self.ignore_spans.append(match.span())
             parsed = RegexNote(match, note_type, tags=True, id=True).parse(
                 self.target_deck,
-                url=self.url,
                 frozen_fields_dict=self.frozen_fields_dict
             )
             if parsed.id not in App.EXISTING_IDS:
-                print(
-                    "Warning! Note with id ",
-                    parsed.id,
-                    " in file ",
-                    self.filename,
-                    " does not exist in Anki!"
-                )
+                self.warn_missing_id(parsed.id)
             else:
                 self.notes_to_edit.append(parsed)
         for match in findignore(regexp_id, self.file, self.ignore_spans):
@@ -1385,17 +1349,10 @@ class RegexFile(File):
             self.ignore_spans.append(match.span())
             parsed = RegexNote(match, note_type, tags=False, id=True).parse(
                 self.target_deck,
-                url=self.url,
                 frozen_fields_dict=self.frozen_fields_dict
             )
             if parsed.id not in App.EXISTING_IDS:
-                print(
-                    "Warning! Note with id ",
-                    parsed.id,
-                    " in file ",
-                    self.filename,
-                    " does not exist in Anki!"
-                )
+                self.warn_missing_id(parsed.id)
             else:
                 self.notes_to_edit.append(parsed)
         for match in findignore(regexp_tags, self.file, self.ignore_spans):
@@ -1403,11 +1360,10 @@ class RegexFile(File):
             self.ignore_spans.append(match.span())
             parsed = RegexNote(match, note_type, tags=True, id=False).parse(
                 self.target_deck,
-                url=self.url,
                 frozen_fields_dict=self.frozen_fields_dict
             )
-            if parsed == 1:
-                # Error code
+            if parsed is None:
+                # Cloze note had no detected clozes -- skip it.
                 continue
             parsed.note["tags"] += self.global_tags.split(TAG_SEP)
             self.notes_to_add.append(
@@ -1419,11 +1375,10 @@ class RegexFile(File):
             self.ignore_spans.append(match.span())
             parsed = RegexNote(match, note_type, tags=False, id=False).parse(
                 self.target_deck,
-                url=self.url,
                 frozen_fields_dict=self.frozen_fields_dict
             )
-            if parsed == 1:
-                # Error code
+            if parsed is None:
+                # Cloze note had no detected clozes -- skip it.
                 continue
             parsed.note["tags"] += self.global_tags.split(TAG_SEP)
             self.notes_to_add.append(
@@ -1455,12 +1410,6 @@ class RegexFile(File):
         )
         self.fix_newline_ids()
 
-    def remove_empties(self):
-        """Remove empty notes from self.file."""
-        self.file = RegexFile.EMPTY_REGEXP.sub(
-            "", self.file
-        )
-
 
 class Directory:
     """Class for managing a directory of files at a time."""
@@ -1474,40 +1423,42 @@ class Directory:
         else:
             self.file_class = File
         os.chdir(self.path)
-        if onefile:
-            # Hence, just one file to do
-            self.files = [self.file_class(onefile)]
-        else:
-            with os.scandir() as it:
-                self.files = sorted(
-                    [
-                        self.file_class(entry.path)
-                        for entry in it
-                        if entry.is_file() and os.path.splitext(
-                            entry.path
-                        )[1] in App.SUPPORTED_EXTS
-                    ], key=lambda file: [
-                        int(part) if part.isdigit() else part.lower()
-                        for part in re.split(r'(\d+)', file.filename)]
-                )
-        files_changed = []
-        for file in self.files:
-            if file.filename in App.FILE_HASHES and (
-                file.hash == App.FILE_HASHES[file.filename]
-            ):
-                # Indicates we've seen this in a scan before,
-                # And that it hasn't changed.
-                # So, we don't need to do anything with it!
-                print("Skipping", file.filename, "as we've scanned it before.")
+        try:
+            if onefile:
+                # Hence, just one file to do
+                self.files = [self.file_class(onefile)]
             else:
-                file.scan_file()
-                files_changed.append(file)
-        self.files = files_changed
-        os.chdir(self.parent)
+                with os.scandir() as it:
+                    self.files = sorted(
+                        [
+                            self.file_class(entry.path)
+                            for entry in it
+                            if entry.is_file() and os.path.splitext(
+                                entry.path
+                            )[1] in App.SUPPORTED_EXTS
+                        ], key=lambda file: [
+                            int(part) if part.isdigit() else part.lower()
+                            for part in re.split(r'(\d+)', file.filename)]
+                    )
+            files_changed = []
+            for file in self.files:
+                if file.filename in App.FILE_HASHES and (
+                    file.hash == App.FILE_HASHES[file.filename]
+                ):
+                    # Indicates we've seen this in a scan before,
+                    # And that it hasn't changed.
+                    # So, we don't need to do anything with it!
+                    print("Skipping", file.filename, "as we've scanned it before.")
+                else:
+                    file.scan_file()
+                    files_changed.append(file)
+            self.files = files_changed
+        finally:
+            os.chdir(self.parent)
 
     def requests_1(self):
         """Get the 1st HTTP request for this directory."""
-        logging.info("Forming request 1 for directory" + self.path)
+        logging.info("Forming request 1 for directory " + self.path)
         requests = list()
         logging.info("Adding notes into Anki...")
         requests.append(
@@ -1568,13 +1519,15 @@ class Directory:
         for file in self.files:
             file.tags = tags
         os.chdir(self.path)
-        for file in self.files:
-            file.get_cards()
-            file.write_ids()
-            logging.info("Removing empty notes for file " + file.filename)
-            file.remove_empties()
-            file.write_file()
-        os.chdir(self.parent)
+        try:
+            for file in self.files:
+                file.get_cards()
+                file.write_ids()
+                logging.info("Removing empty notes for file " + file.filename)
+                file.remove_empties()
+                file.write_file()
+        finally:
+            os.chdir(self.parent)
 
     def requests_2(self):
         """Get 2nd big request."""

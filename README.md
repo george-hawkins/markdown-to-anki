@@ -235,6 +235,22 @@ END
 
 For lots more information, see the [getting-started section](https://github.com/ObsidianToAnki/Obsidian_to_Anki/wiki/Steps-for-new-users) of the `Obsidian_to_Anki` wiki.
 
+Development
+-----------
+
+Intall the necessary dependencies for linting and testing:
+
+```
+(venv) $ pip install pytest ruff
+```
+
+And run the test suite and linter like so:
+
+```
+(venv) $ python -m pytest
+(venv) $ ruff check .
+```
+
 Notes
 -----
 
