@@ -136,7 +136,7 @@ def contained_in(span, spans):
     )
 
 
-def findignore(pattern, string, ignore_spans):
+def find_ignore(pattern, string, ignore_spans):
     """Yield all matches for pattern in string not in ignore_spans."""
     return (
         match
@@ -185,7 +185,7 @@ class AnkiConnect:
 
     @staticmethod
     def request(action, **params):
-        """Format action and parameters into Ankiconnect style."""
+        """Format action and parameters into AnkiConnect style."""
         return {'action': action, 'params': params, 'version': 6}
 
     @staticmethod
@@ -265,9 +265,9 @@ class FormatConverter:
             ][field]
 
     @staticmethod
-    def inline_anki_repl(matchobject):
+    def inline_anki_repl(match_object):
         """Get replacement string for Markdown-formatted inline math."""
-        found_string = matchobject.group(0)
+        found_string = match_object.group(0)
         # Strip Markdown formatting by removing first and last characters
         found_string = found_string[1:-1]
         # Add Anki formatting
@@ -276,9 +276,9 @@ class FormatConverter:
         return result
 
     @staticmethod
-    def block_anki_repl(matchobject):
+    def block_anki_repl(match_object):
         """Get replacement string for Markdown-formatted block math."""
-        found_string = matchobject.group(0)
+        found_string = match_object.group(0)
         # Strip Markdown formatting by removing first two and last two chars
         found_string = found_string[2:-2]
         # Add Anki formatting
@@ -353,9 +353,9 @@ class FormatConverter:
                 # Adds the filename and data to media_names
 
     @staticmethod
-    def path_to_filename(matchobject):
-        """Replace the src in matchobject appropriately."""
-        found_string, found_path = matchobject.group(0), matchobject.group(1)
+    def path_to_filename(match_object):
+        """Replace the src in match_object appropriately."""
+        found_string, found_path = match_object.group(0), match_object.group(1)
         if FormatConverter.is_url(found_path):
             return found_string  # So urls should not be altered.
         found_string = found_string.replace(
@@ -579,8 +579,8 @@ class RegexNote:
     ID_REGEXP_STR = r"\n?(?:<!--)?" + ID_PREFIX + r"(\d+).*"
     TAG_REGEXP_STR = r"(" + TAG_PREFIX + r".*)"
 
-    def __init__(self, matchobject, note_type, tags=False, id=False):
-        self.match = matchobject
+    def __init__(self, match_object, note_type, tags=False, id=False):
+        self.match = match_object
         self.note_type = note_type
         self.groups = list(self.match.groups())
         if id:
@@ -630,7 +630,7 @@ class RegexNote:
             "CurlyCloze"
         ] and not note_has_clozes(template):
             # Skip: a Cloze note with no detected clozes. We can accidentally
-            # recognise { in the wrong places, so this guards against that.
+            # recognize { in the wrong places, so this guards against that.
             return None
         return Note_and_id(note=template, id=self.identifier)
 
@@ -1337,7 +1337,7 @@ class RegexFile(File):
         regexp = re.compile(
             regexp, flags=re.MULTILINE
         )
-        for match in findignore(regexp_tags_id, self.file, self.ignore_spans):
+        for match in find_ignore(regexp_tags_id, self.file, self.ignore_spans):
             # This note has id, so we update it
             self.ignore_spans.append(match.span())
             parsed = RegexNote(match, note_type, tags=True, id=True).parse(
@@ -1348,7 +1348,7 @@ class RegexFile(File):
                 self.warn_missing_id(parsed.id)
             else:
                 self.notes_to_edit.append(parsed)
-        for match in findignore(regexp_id, self.file, self.ignore_spans):
+        for match in find_ignore(regexp_id, self.file, self.ignore_spans):
             # This note has id, so we update it
             self.ignore_spans.append(match.span())
             parsed = RegexNote(match, note_type, tags=False, id=True).parse(
@@ -1359,7 +1359,7 @@ class RegexFile(File):
                 self.warn_missing_id(parsed.id)
             else:
                 self.notes_to_edit.append(parsed)
-        for match in findignore(regexp_tags, self.file, self.ignore_spans):
+        for match in find_ignore(regexp_tags, self.file, self.ignore_spans):
             # This note has no id, so we add it
             self.ignore_spans.append(match.span())
             parsed = RegexNote(match, note_type, tags=True, id=False).parse(
@@ -1374,7 +1374,7 @@ class RegexFile(File):
                 parsed.note
             )
             self.id_indexes.append(match.end())
-        for match in findignore(regexp, self.file, self.ignore_spans):
+        for match in find_ignore(regexp, self.file, self.ignore_spans):
             # This note has no id, so we update it
             self.ignore_spans.append(match.span())
             parsed = RegexNote(match, note_type, tags=False, id=False).parse(
