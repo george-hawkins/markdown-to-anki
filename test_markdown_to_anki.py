@@ -12,6 +12,7 @@ import re
 
 import pytest
 
+import anki_connect
 import markdown_to_anki as mta
 
 
@@ -347,17 +348,17 @@ def test_regexnote_cloze_without_clozes_is_skipped():
 # --------------------------------------------------------------------------
 
 def test_anki_parse_returns_result():
-    assert mta.AnkiConnect.parse({"result": 42, "error": None}) == 42
+    assert anki_connect.AnkiConnect.parse({"result": 42, "error": None}) == 42
 
 
 def test_anki_parse_raises_on_error():
-    with pytest.raises(mta.AnkiConnectError):
-        mta.AnkiConnect.parse({"result": None, "error": "boom"})
+    with pytest.raises(anki_connect.AnkiConnectError):
+        anki_connect.AnkiConnect.parse({"result": None, "error": "boom"})
 
 
 def test_anki_parse_raises_on_malformed_response():
-    with pytest.raises(mta.AnkiConnectError):
-        mta.AnkiConnect.parse({"result": 1})  # missing 'error' field
+    with pytest.raises(anki_connect.AnkiConnectError):
+        anki_connect.AnkiConnect.parse({"result": 1})  # missing 'error' field
 
 
 # --------------------------------------------------------------------------

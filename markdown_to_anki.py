@@ -16,6 +16,8 @@ import logging
 import hashlib
 from typing import Any
 
+from anki_connect import ANKI_PORT, AnkiConnect
+
 logging.basicConfig(
     filename="markdown_to_anki_log.log",
     level=logging.DEBUG,
@@ -66,8 +68,6 @@ md_parser = markdown.Markdown(
         "sane_lists"
     ]
 )
-
-ANKI_PORT = 8765
 
 ANKI_CLOZE_REGEXP = re.compile(r"{{c\d+::[\s\S]+?}}")
 
@@ -178,51 +178,12 @@ def main():
     App()
 
 
-class AnkiConnectError(Exception):
-    """Raised when AnkiConnect returns an error or a malformed response."""
-
-
 class DuplicateNoteIDError(Exception):
     """Raised when the same note ID appears more than once in the source."""
 
 
 class UnknownNoteTypeError(Exception):
     """Raised when a note names a type that doesn't exist in Anki."""
-
-
-class AnkiConnect:
-    """Namespace for AnkiConnect functions."""
-
-    @staticmethod
-    def request(action, **params):
-        """Format action and parameters into AnkiConnect style."""
-        return {"action": action, "params": params, "version": 6}
-
-    @staticmethod
-    def invoke(action, **params):
-        """Do the action with the specified parameters."""
-        request_json = json.dumps(
-            AnkiConnect.request(action, **params)
-        ).encode("utf-8")
-        response = json.load(urllib.request.urlopen(
-            urllib.request.Request(
-                f"http://localhost:{ANKI_PORT}", request_json
-            )
-        ))
-        return AnkiConnect.parse(response)
-
-    @staticmethod
-    def parse(response):
-        """Parse the received response."""
-        if len(response) != 2:
-            raise AnkiConnectError("response has an unexpected number of fields")
-        if "error" not in response:
-            raise AnkiConnectError("response is missing required error field")
-        if "result" not in response:
-            raise AnkiConnectError("response is missing required result field")
-        if response["error"] is not None:
-            raise AnkiConnectError(response["error"])
-        return response["result"]
 
 
 class FormatConverter:
