@@ -250,9 +250,21 @@ END
 
 The script looks for the image at `decks/images/diagram.png`. When it runs, it reads the file, uses Anki-Connect to copy it into Anki's `collection.media` folder, and then rewrites the reference in the card to use just the bare filename (`diagram.png`). Anki's `collection.media` is a single flat folder, so the subfolder you keep media in locally is purely for your own organization — and it means media filenames have to be unique (two different files both called `diagram.png` would collide).
 
-Once a file has been uploaded, its name is recorded in `markdown_to_anki_data.json` and it won't be uploaded again on later runs. If you change a file's _contents_ without renaming it, pass `-m` / `--mediaupdate` to force media to be re-uploaded.
+Once a file has been uploaded, this is recorded in `markdown_to_anki_data.json`. This file is just used to speed up future uploads:
+
+* For Markdown files, it records a SHA, and only reuploads the file if its SHA has changed since the last upload.
+* For media files (audio, images etc.), it just records the files name and doesn't upload it when it encounters it on the next upload.
+
+So if you change the contents of a media file but don't change its name, the changed version won't be uploaded to Anki unless you use the `--mediaupdate` argument to force media to be reuploaded.
 
 The script does not handle media files that are not part of cards, e.g. font files that you reference in card templates. You have to handle these yourself.
+
+### Updating .ini and ...\_data.json
+
+There are two command line "update" arguments:
+
+* `-u` / `--update` — refreshes `markdown_to_anki_config.ini` by re-querying Anki for its current note types and fields. Use this when you've added or renamed note types in Anki.
+*  `-m` / `--mediaupdate` — this is misnamed as it completely resets the `markdown_to_anki_data.json` which causes not just all media files to be reuploaded but also forces all Markdown files to be reuploaded. Use this if you've accidentally deleted notes or the related media.
 
 ### Going further
 
