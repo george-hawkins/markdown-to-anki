@@ -1065,9 +1065,9 @@ class App:
 class File:
     """Class for performing script operations at the file-level."""
 
-    def __init__(self, filepath: str | Path):
+    def __init__(self, filepath: Path):
         """Perform initial file reading and attribute setting."""
-        self.filename = Path(filepath)
+        self.filename = filepath
         with open(self.filename, encoding="utf_8") as f:
             self.file = f.read()
             self.original_file = self.file
@@ -1460,9 +1460,9 @@ class RegexFile(File):
 class Directory:
     """Class for managing a directory of files at a time."""
 
-    def __init__(self, abspath: str | Path, regex: bool = False):
+    def __init__(self, path: Path, regex: bool = False):
         """Scan directory for files."""
-        self.path = Path(abspath)
+        self.path = path
         self.file_class: type[File] = RegexFile if regex else File
         self.files = sorted(
             [

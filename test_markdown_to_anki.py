@@ -456,7 +456,7 @@ def test_scan_file_sorts_add_edit_delete(scan_env):
         "START\nBasic\nFront: old\nBack: card\n<!--ID: 42-->\nEND\n"
         "DELETE\n<!--ID: 99-->\n"
     )
-    f = mta.File(str(path))
+    f = mta.File(path)
     f.scan_file()
     # A brand-new note (no id) -> add, with its insertion position recorded.
     assert len(f.notes_to_add) == 1
@@ -476,6 +476,6 @@ def test_scan_file_duplicate_id_raises(scan_env):
         "START\nBasic\nFront: a\nBack: b\n<!--ID: 42-->\nEND\n"
         "START\nBasic\nFront: copy\nBack: of b\n<!--ID: 42-->\nEND\n"
     )
-    f = mta.File(str(path))
+    f = mta.File(path)
     with pytest.raises(mta.DuplicateNoteIDError, match="42"):
         f.scan_file()
