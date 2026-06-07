@@ -1,4 +1,4 @@
-"""Characterization tests for markdown_to_anki.
+"""Characterization tests for Markdown_to_anki.
 
 These lock in the *current* behavior of the pure (non-Anki) logic so that
 refactoring cannot silently change output. A few assertions encode known

@@ -46,15 +46,15 @@ def retrieve_deck(deck_name) -> dict[int, Note]:
     return {n["noteId"]: Note.from_dict(n) for n in raw}
 
 
-def save_deck(notes, directory, filename_stem):
+def save_deck(notes, directory: Path, filename_stem: str):
     timestamp = _utc_isoformat(datetime.now(tz=timezone.utc)).replace(":", "-")
     filename = directory / f"{filename_stem}-{timestamp}.json"
     with open(filename, "w", encoding="utf-8") as f:
         json.dump({str(note_id): asdict(n) for note_id, n in notes.items()}, f, indent=2)
-    return filename.resolve()
+    return filename
 
 
-def load_prev_notes(directory, filename_stem):
+def load_prev_notes(directory: Path, filename_stem: str):
     pattern = f"{filename_stem}-????-??-??T??-??-??.??????Z.json"
     matches = sorted(directory.glob(pattern))
     if not matches:
@@ -86,10 +86,12 @@ def _diff_notes(notes, prev_notes):
             print()
 
 
-def diff_deck(deck_name, directory) -> bool:
-    directory = Path(directory)
+def diff_deck(deck_name, directory: Path) -> bool:
     directory.mkdir(parents=True, exist_ok=True)
     notes = retrieve_deck(deck_name)
+    if len(notes) == 0:
+        print(f"Deck {deck_name} is empty or does not exist")
+        return False
     filename_stem = to_filename(deck_name)
     prev_filename, prev_notes = load_prev_notes(directory, filename_stem)
     if prev_notes is not None and prev_notes == notes:
@@ -105,6 +107,6 @@ def diff_deck(deck_name, directory) -> bool:
 
 
 if __name__ == "__main__":
-    changed = diff_deck(sys.argv[2], sys.argv[1])
+    changed = diff_deck(sys.argv[2], Path(sys.argv[1]))
     if changed:
         print(f"Deck changed")
