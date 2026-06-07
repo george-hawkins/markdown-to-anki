@@ -897,7 +897,7 @@ class App:
             print("Finished: no changes found.")
             return
         self.print_summary(*change_counts)
-        self.snapshot_decks(affected_decks, backups_path)
+        self.snapshot_decks(affected_decks, backups_path, output_diff=False)
 
     def setup_cli_parser(self):
         """Set up the command-line argument parser."""
@@ -1031,9 +1031,9 @@ class App:
         App.SEEN_IDS.add(note_id)
 
     @staticmethod
-    def snapshot_decks(affected_decks, backups_path: Path) -> bool:
+    def snapshot_decks(affected_decks, backups_path: Path, output_diff=True) -> bool:
         """Snapshot each affected deck."""
-        changed = [diff_deck(deck, backups_path) for deck in affected_decks]
+        changed = [diff_deck(deck, backups_path, output_diff) for deck in affected_decks]
         return any(changed)
 
     @staticmethod

@@ -64,6 +64,13 @@ def load_prev_notes(directory: Path, filename_stem: str):
         return filename, {int(note_id): Note(**d) for note_id, d in json.load(f).items()}
 
 
+def _note_equal(a: Note, b: Note) -> bool:
+    return a.model_name == b.model_name and a.tags == b.tags and a.fields == b.fields and a.cards == b.cards
+
+def _notes_equal(a:  dict[int, Note], b:  dict[int, Note]) -> bool:
+    return a.keys() == b.keys() and all(_note_equal(a[k], b[k]) for k in b)
+
+
 def _diff_notes(notes, prev_notes):
     d = ObjectDiff()
     for note_id in sorted(set(notes) | set(prev_notes)):
@@ -71,7 +78,7 @@ def _diff_notes(notes, prev_notes):
             print(f"{note_id} deleted")
         elif note_id not in prev_notes:
             print(f"{note_id} added {notes[note_id].mod}")
-        elif notes[note_id] != prev_notes[note_id]:
+        elif not _note_equal(notes[note_id], prev_notes[note_id]):
             note = notes[note_id]
             prev = prev_notes[note_id]
             print(f"{note_id} changed {note.mod}")
@@ -86,7 +93,9 @@ def _diff_notes(notes, prev_notes):
             print()
 
 
-def diff_deck(deck_name, directory: Path) -> bool:
+# Saves an updated version of the given deck if it's changed since the last version was saved.
+# Outputs a diff of the old and new versions if output_diff=True is passed in.
+def diff_deck(deck_name, directory: Path, output_diff=True) -> bool:
     directory.mkdir(parents=True, exist_ok=True)
     notes = retrieve_deck(deck_name)
     if len(notes) == 0:
@@ -94,7 +103,7 @@ def diff_deck(deck_name, directory: Path) -> bool:
         return False
     filename_stem = to_filename(deck_name)
     prev_filename, prev_notes = load_prev_notes(directory, filename_stem)
-    if prev_notes is not None and prev_notes == notes:
+    if prev_notes is not None and _notes_equal(prev_notes, notes):
         print(f"No changes to {deck_name}")
         return False
     filename = save_deck(notes, directory, filename_stem)
@@ -102,7 +111,8 @@ def diff_deck(deck_name, directory: Path) -> bool:
         print(f"Saved {len(notes)} to {filename}")
         return False
     print(f"Saved {filename} (previous {prev_filename})")
-    _diff_notes(notes, prev_notes)
+    if output_diff:
+        _diff_notes(notes, prev_notes)
     return True
 
 
