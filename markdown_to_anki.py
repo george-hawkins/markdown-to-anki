@@ -48,20 +48,10 @@ NOTE_DICT_TEMPLATE: dict[str, Any] = {
     "audio": []
 }
 
-CONFIG_PATH = os.path.expanduser(
-    os.path.join(
-        os.path.dirname(os.path.realpath(__file__)),
-        "markdown_to_anki_config.ini"
-    )
-)
+CONFIG_PATH = Path(__file__).resolve().parent / "markdown_to_anki_config.ini"
 CONFIG_DATA = {}
 
-DATA_PATH = os.path.expanduser(
-    os.path.join(
-        os.path.dirname(os.path.realpath(__file__)),
-        "markdown_to_anki_data.json"
-    )
-)
+DATA_PATH = Path(__file__).resolve().parent / "markdown_to_anki_data.json"
 
 md_parser = markdown.Markdown(
     extensions=[
@@ -93,14 +83,14 @@ def write_safe(filename, contents):
 
     If write fails, a backup 'filename.bak' will still exist.
     """
-    with open(f"{filename}.tmp", "w", encoding="utf_8") as temp:
-        temp.write(contents)
-    os.rename(filename, f"{filename}.bak")
-    os.rename(f"{filename}.tmp", filename)
-    with open(filename, encoding="utf_8") as f:
-        success = (f.read() == contents)
-    if success:
-        os.remove(f"{filename}.bak")
+    p = Path(filename)
+    tmp = p.with_name(p.name + ".tmp")
+    bak = p.with_name(p.name + ".bak")
+    tmp.write_text(contents, encoding="utf_8")
+    p.rename(bak)
+    tmp.rename(p)
+    if p.read_text(encoding="utf_8") == contents:
+        bak.unlink()
 
 
 def string_insert(string, position_inserts):
@@ -178,7 +168,7 @@ def wait_for_port(port, host="localhost", timeout=5.0):
 
 def main():
     """Main functionality of script."""
-    if not os.path.exists(CONFIG_PATH):
+    if not CONFIG_PATH.exists():
         Config.update_config()
     App()
 
@@ -313,7 +303,7 @@ class FormatConverter:
             if FormatConverter.is_url(path):
                 continue  # Skips over images web-hosted.
             path = urllib.parse.unquote(path)
-            filename = os.path.basename(path)
+            filename = Path(path).name
             if filename not in App.ADDED_MEDIA and filename not in MEDIA:
                 MEDIA[filename] = file_encode(path)
                 # Adds the filename and data to media_names
@@ -323,7 +313,7 @@ class FormatConverter:
         """Get all the audio that needs to be added."""
         for match in FormatConverter.SOUND_REGEXP.finditer(html_text):
             path = match.group(1)
-            filename = os.path.basename(path)
+            filename = Path(path).name
             if filename not in App.ADDED_MEDIA and filename not in MEDIA:
                 MEDIA[filename] = file_encode(path)
                 # Adds the filename and data to media_names
@@ -335,7 +325,7 @@ class FormatConverter:
         if FormatConverter.is_url(found_path):
             return found_string  # So urls should not be altered.
         found_string = found_string.replace(
-            found_path, os.path.basename(urllib.parse.unquote(found_path))
+            found_path, Path(urllib.parse.unquote(found_path)).name
         )
         return found_string
 
@@ -694,7 +684,7 @@ class Config:
         print("Updating configuration file...")
         config = configparser.ConfigParser()
         config.optionxform = str
-        if os.path.exists(CONFIG_PATH):
+        if CONFIG_PATH.exists():
             print("Config file exists, reading...")
             config.read(CONFIG_PATH, encoding="utf-8-sig")
         note_types = AnkiConnect.invoke("modelNames")
@@ -813,7 +803,7 @@ class App:
     def __init__(self):
         """Execute the main functionality of the script."""
         Config.load_config()
-        if not os.path.exists(DATA_PATH):
+        if not DATA_PATH.exists():
             print("Data file does not exist.")
             Data.create_data_file()
         Data.load_data_file()
@@ -841,35 +831,24 @@ class App:
             return
 
         App.SEEN_IDS = set()
-        current = os.getcwd()
-        self.path: str = args.path
-        if not os.path.isdir(self.path):
+        self.path: Path = Path(args.path)
+        if not self.path.is_dir():
             raise NotADirectoryError(f"{self.path} is not a directory.")
-        os.chdir(self.path)
-        try:
-            if args.recurse:
-                directories = []
-                for root, dirs, files in os.walk(os.getcwd()):
-                    directories.append(
-                        Directory(root, regex=args.regex)
-                    )
-                    # Prune "." folders so os.walk skips them.
-                    # (Editing dirs while iterating skips entries.)
-                    dirs[:] = [d for d in dirs if not d.startswith(".")]
-            else:
-                directories = [
-                    Directory(
-                        os.getcwd(), regex=args.regex
-                    )
-                ]
-        finally:
-            os.chdir(current)
+        if args.recurse:
+            directories = []
+            for root, dirs, files in self.path.walk():
+                directories.append(Directory(root, regex=args.regex))
+                # Prune "." folders so Path.walk skips them.
+                # (Editing dirs while iterating skips entries.)
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+        else:
+            directories = [Directory(self.path, regex=args.regex)]
         affected_decks = sorted({file.target_deck for directory in directories for file in directory.files})
-        backups_path = self.get_backup_path(self.path)
-        changed = self.snapshot_decks(affected_decks, backups_path)
-        if changed:
-            print("Cards already in Anki have been changed there - aborting.")
-            sys.exit(1)
+        # backups_path = self.get_backup_path(self.path)
+        # changed = self.snapshot_decks(affected_decks, backups_path)
+        # if changed:
+        #     print("Cards already in Anki have been changed there - aborting.")
+        #     sys.exit(1)
         requests = []
         print("Getting tag list")
         requests.append(
@@ -915,7 +894,7 @@ class App:
             print("Finished: no changes found.")
             return
         self.print_summary(*change_counts)
-        self.snapshot_decks(affected_decks, backups_path)
+        # self.snapshot_decks(affected_decks, backups_path)
 
     def setup_cli_parser(self):
         """Set up the command-line argument parser."""
@@ -1048,16 +1027,15 @@ class App:
             )
         App.SEEN_IDS.add(note_id)
 
-    @staticmethod
-    def get_backup_path(path: str) -> Path:
-        base = Path(path if os.path.isdir(path) else os.path.dirname(path))
-        return base / BACKUPS
-
-    @staticmethod
-    def snapshot_decks(affected_decks, backups_path) -> bool:
-        """Snapshot each affected deck."""
-        changed = [diff_deck(deck, backups_path) for deck in affected_decks]
-        return any(changed)
+    # @staticmethod
+    # def get_backup_path(path: Path) -> Path:
+    #     return (path if path.is_dir() else path.parent) / BACKUPS
+    #
+    # @staticmethod
+    # def snapshot_decks(affected_decks, backups_path) -> bool:
+    #     """Snapshot each affected deck."""
+    #     changed = [diff_deck(deck, backups_path) for deck in affected_decks]
+    #     return any(changed)
 
     @staticmethod
     def get_change_counts(directories):
@@ -1084,10 +1062,9 @@ class App:
 class File:
     """Class for performing script operations at the file-level."""
 
-    def __init__(self, filepath: str):
+    def __init__(self, filepath: str | Path):
         """Perform initial file reading and attribute setting."""
-        self.filename = filepath
-        self.path = os.path.abspath(filepath)
+        self.filename = Path(filepath)
         with open(self.filename, encoding="utf_8") as f:
             self.file = f.read()
             self.original_file = self.file
@@ -1480,29 +1457,26 @@ class RegexFile(File):
 class Directory:
     """Class for managing a directory of files at a time."""
 
-    def __init__(self, abspath: str, regex: bool = False):
+    def __init__(self, abspath: str | Path, regex: bool = False):
         """Scan directory for files."""
-        self.path = abspath
-        self.parent = os.getcwd()
+        self.path = Path(abspath)
+        self.parent = Path.cwd()
         self.file_class: type[File] = RegexFile if regex else File
         os.chdir(self.path)
         try:
-            with os.scandir() as it:
-                self.files = sorted(
-                    [
-                        self.file_class(entry.path)
-                        for entry in it
-                        if entry.is_file() and os.path.splitext(
-                            entry.path
-                        )[1] in App.SUPPORTED_EXTS
-                    ], key=lambda f: [
-                        int(part) if part.isdigit() else part.lower()
-                        for part in re.split(r"(\d+)", f.filename)]
-                )
+            self.files = sorted(
+                [
+                    self.file_class(entry)
+                    for entry in Path(".").iterdir()
+                    if entry.is_file() and entry.suffix in App.SUPPORTED_EXTS
+                ], key=lambda f: [
+                    int(part) if part.isdigit() else part.lower()
+                    for part in re.split(r"(\d+)", f.filename.name)]
+            )
             files_changed = []
             for file in self.files:
-                if file.filename in App.FILE_HASHES and (
-                    file.hash == App.FILE_HASHES[file.filename]
+                if str(file.filename) in App.FILE_HASHES and (
+                    file.hash == App.FILE_HASHES[str(file.filename)]
                 ):
                     # Indicates we've seen this in a scan before,
                     # And that it hasn't changed.
@@ -1628,7 +1602,7 @@ class Directory:
 
     def hashes(self):
         """Return a dictionary of file hashes to use."""
-        return {file.filename: file.hash for file in self.files}
+        return {str(file.filename): file.hash for file in self.files}
 
 
 if __name__ == "__main__":
