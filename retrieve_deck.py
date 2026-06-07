@@ -49,6 +49,10 @@ def retrieve_deck(deck_name) -> dict[int, Note]:
 def save_deck(notes, directory: Path, filename_stem: str):
     timestamp = _utc_isoformat(datetime.now(tz=timezone.utc)).replace(":", "-")
     filename = directory / f"{filename_stem}-{timestamp}.json"
+    # Python is so slow that the timestamp based filenames don't clash
+    # but sanity check for a future in which things have got faster...
+    if filename.exists():
+        raise FileExistsError(f"File \"{filename}\" already exists")
     with open(filename, "w", encoding="utf-8") as f:
         json.dump({str(note_id): asdict(n) for note_id, n in notes.items()}, f, indent=2)
     return filename
@@ -104,7 +108,7 @@ def diff_deck(deck_name, directory: Path, output_diff=True) -> bool:
     filename_stem = to_filename(deck_name)
     prev_filename, prev_notes = load_prev_notes(directory, filename_stem)
     if prev_notes is not None and _notes_equal(prev_notes, notes):
-        print(f"No changes to {deck_name}")
+        print(f"No remote changes to {deck_name}")
         return False
     filename = save_deck(notes, directory, filename_stem)
     if prev_notes is None:
