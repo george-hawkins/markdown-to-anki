@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from anki_connect import AnkiConnect
+from diff_utils import ObjectDiff
 
 
 def _utc_isoformat(dt):
@@ -63,6 +64,28 @@ def load_prev_notes(directory, filename_stem):
         return filename, {int(note_id): Note(**d) for note_id, d in json.load(f).items()}
 
 
+def _diff_notes(notes, prev_notes):
+    d = ObjectDiff()
+    for note_id in sorted(set(notes) | set(prev_notes)):
+        if note_id not in notes:
+            print(f"{note_id} deleted")
+        elif note_id not in prev_notes:
+            print(f"{note_id} added {notes[note_id].mod}")
+        elif notes[note_id] != prev_notes[note_id]:
+            note = notes[note_id]
+            prev = prev_notes[note_id]
+            print(f"{note_id} changed {note.mod}")
+            changes = (
+                d.compare(prev.model_name, note.model_name)
+                + d.compare(prev.tags, note.tags)
+                + d.compare(prev.fields, note.fields)
+                + d.compare(prev.cards, note.cards)
+            )
+            for change in changes:
+                print(f"* {change}")
+            print()
+
+
 def diff_deck(deck_name, directory) -> bool:
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -77,6 +100,7 @@ def diff_deck(deck_name, directory) -> bool:
         print(f"saved {filename}")
         return False
     print(f"saved {filename} (previous {prev_filename})")
+    _diff_notes(notes, prev_notes)
     return True
 
 
