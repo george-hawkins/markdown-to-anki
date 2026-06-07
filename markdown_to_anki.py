@@ -812,9 +812,6 @@ class App:
 
     def __init__(self):
         """Execute the main functionality of the script."""
-        self.parser = argparse.ArgumentParser(
-            description="Add cards to Anki from a markdown or text file."
-        )
         Config.load_config()
         if not os.path.exists(DATA_PATH):
             print("Data file does not exist.")
@@ -822,6 +819,10 @@ class App:
         Data.load_data_file()
         self.get_fields()
         self.get_ids()
+
+        self.parser = argparse.ArgumentParser(
+            description="Add cards to Anki from a markdown or text file."
+        )
         self.setup_cli_parser()
         args = self.parser.parse_args()
         no_args = True
@@ -835,98 +836,86 @@ class App:
         self.gen_regexp()
         if args.path:
             no_args = False
-            App.SEEN_IDS = set()
-            current = os.getcwd()
-            self.path: str = args.path
-            if os.path.isdir(self.path):
-                os.chdir(self.path)
-                try:
-                    if args.recurse:
-                        directories = []
-                        for root, dirs, files in os.walk(os.getcwd()):
-                            directories.append(
-                                Directory(root, regex=args.regex)
-                            )
-                            # Prune "." folders so os.walk skips them.
-                            # (Editing dirs while iterating skips entries.)
-                            dirs[:] = [d for d in dirs if not d.startswith(".")]
-                    else:
-                        directories = [
-                            Directory(
-                                os.getcwd(), regex=args.regex
-                            )
-                        ]
-                finally:
-                    os.chdir(current)
-            else:
-                # Still need to get to directory of file for image resolving
-                # So, go to directory where file is (hopefully)
-                # But, if just file name is given (e.g. cli), don't want to
-                # Break anything.
-                if os.path.dirname(self.path):
-                    file_dir = os.path.dirname(self.path)
-                else:
-                    file_dir = current
-                directories = [
-                    Directory(
-                        file_dir, regex=args.regex, onefile=self.path
-                    )
-                ]
-            affected_decks = sorted({file.target_deck for directory in directories for file in directory.files})
-            backups_path = self.get_backup_path(self.path)
-            changed = self.snapshot_decks(affected_decks, backups_path)
-            if changed:
-                print("Cards already in Anki have been changed there - aborting.")
-                sys.exit(1)
-            requests = []
-            print("Getting tag list")
-            requests.append(
-                AnkiConnect.request(
-                    "getTags"
-                )
-            )
-            if len(MEDIA) > 0:
-                print("Adding media with these filenames...")
-                print(list(MEDIA.keys()))
-            requests.append(self.get_add_media())
-            print("Adding directory requests...")
-            for directory in directories:
-                requests.append(directory.requests_1())
-            result = AnkiConnect.invoke(
-                "multi",
-                actions=requests
-            )
-            tags = AnkiConnect.parse(result[0])
-            directory_responses = result[2:]
-            for directory, response in zip(directories, directory_responses):
-                directory.parse_requests_1(AnkiConnect.parse(response), tags)
-            requests = []
-            for directory in directories:
-                requests.append(directory.requests_2())
-            AnkiConnect.invoke(
-                "multi",
-                actions=requests
-            )
-            App.ADDED_MEDIA = set(App.ADDED_MEDIA)
-            App.ADDED_MEDIA.update(MEDIA.keys())
-            App.ADDED_MEDIA = list(App.ADDED_MEDIA)
-            for directory in directories:
-                App.FILE_HASHES.update(directory.hashes())
-            Data.update_data_file(
-                {
-                    "Added Media": App.ADDED_MEDIA,
-                    "File Hashes": App.FILE_HASHES
-                }
-            )
-            change_counts = self.get_change_counts(directories)
-            if sum(change_counts) == 0:
-                print("Finished: no changes found.")
-                return
-            self.print_summary(*change_counts)
-            self.snapshot_decks(affected_decks, backups_path)
-
         if no_args:
             self.parser.print_help()
+            return
+
+        App.SEEN_IDS = set()
+        current = os.getcwd()
+        self.path: str = args.path
+        if not os.path.isdir(self.path):
+            raise NotADirectoryError(f"{self.path} is not a directory.")
+        os.chdir(self.path)
+        try:
+            if args.recurse:
+                directories = []
+                for root, dirs, files in os.walk(os.getcwd()):
+                    directories.append(
+                        Directory(root, regex=args.regex)
+                    )
+                    # Prune "." folders so os.walk skips them.
+                    # (Editing dirs while iterating skips entries.)
+                    dirs[:] = [d for d in dirs if not d.startswith(".")]
+            else:
+                directories = [
+                    Directory(
+                        os.getcwd(), regex=args.regex
+                    )
+                ]
+        finally:
+            os.chdir(current)
+        affected_decks = sorted({file.target_deck for directory in directories for file in directory.files})
+        backups_path = self.get_backup_path(self.path)
+        changed = self.snapshot_decks(affected_decks, backups_path)
+        if changed:
+            print("Cards already in Anki have been changed there - aborting.")
+            sys.exit(1)
+        requests = []
+        print("Getting tag list")
+        requests.append(
+            AnkiConnect.request(
+                "getTags"
+            )
+        )
+        if len(MEDIA) > 0:
+            print("Adding media with these filenames...")
+            print(list(MEDIA.keys()))
+        requests.append(self.get_add_media())
+        print("Adding directory requests...")
+        for directory in directories:
+            requests.append(directory.requests_1())
+        result = AnkiConnect.invoke(
+            "multi",
+            actions=requests
+        )
+        tags = AnkiConnect.parse(result[0])
+        directory_responses = result[2:]
+        for directory, response in zip(directories, directory_responses):
+            directory.parse_requests_1(AnkiConnect.parse(response), tags)
+        requests = []
+        for directory in directories:
+            requests.append(directory.requests_2())
+        AnkiConnect.invoke(
+            "multi",
+            actions=requests
+        )
+        App.ADDED_MEDIA = set(App.ADDED_MEDIA)
+        App.ADDED_MEDIA.update(MEDIA.keys())
+        App.ADDED_MEDIA = list(App.ADDED_MEDIA)
+        for directory in directories:
+            App.FILE_HASHES.update(directory.hashes())
+        Data.update_data_file(
+            {
+                "Added Media": App.ADDED_MEDIA,
+                "File Hashes": App.FILE_HASHES
+            }
+        )
+        change_counts = self.get_change_counts(directories)
+        if sum(change_counts) == 0:
+            print("Finished: no changes found.")
+            return
+        self.print_summary(*change_counts)
+        self.snapshot_decks(affected_decks, backups_path)
 
     def setup_cli_parser(self):
         """Set up the command-line argument parser."""
@@ -1491,30 +1480,25 @@ class RegexFile(File):
 class Directory:
     """Class for managing a directory of files at a time."""
 
-    def __init__(self, abspath: str, regex: bool = False,
-                 onefile: str | None = None):
+    def __init__(self, abspath: str, regex: bool = False):
         """Scan directory for files."""
         self.path = abspath
         self.parent = os.getcwd()
         self.file_class: type[File] = RegexFile if regex else File
         os.chdir(self.path)
         try:
-            if onefile:
-                # Hence, just one file to do
-                self.files = [self.file_class(onefile)]
-            else:
-                with os.scandir() as it:
-                    self.files = sorted(
-                        [
-                            self.file_class(entry.path)
-                            for entry in it
-                            if entry.is_file() and os.path.splitext(
-                                entry.path
-                            )[1] in App.SUPPORTED_EXTS
-                        ], key=lambda f: [
-                            int(part) if part.isdigit() else part.lower()
-                            for part in re.split(r"(\d+)", f.filename)]
-                    )
+            with os.scandir() as it:
+                self.files = sorted(
+                    [
+                        self.file_class(entry.path)
+                        for entry in it
+                        if entry.is_file() and os.path.splitext(
+                            entry.path
+                        )[1] in App.SUPPORTED_EXTS
+                    ], key=lambda f: [
+                        int(part) if part.isdigit() else part.lower()
+                        for part in re.split(r"(\d+)", f.filename)]
+                )
             files_changed = []
             for file in self.files:
                 if file.filename in App.FILE_HASHES and (
