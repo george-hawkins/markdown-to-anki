@@ -1,6 +1,7 @@
 import re
 import json
 import copy
+import sys
 import urllib.request
 import urllib.parse
 import configparser
@@ -14,9 +15,11 @@ import time
 import socket
 import logging
 import hashlib
+from pathlib import Path
 from typing import Any
 
 from anki_connect import ANKI_PORT, AnkiConnect
+from retrieve_deck import diff_deck
 
 logging.basicConfig(
     filename="markdown_to_anki_log.log",
@@ -25,6 +28,8 @@ logging.basicConfig(
 )
 
 MEDIA = {}
+
+BACKUPS = "backups"
 
 ID_PREFIX = "ID: "
 TAG_PREFIX = "Tags: "
@@ -867,6 +872,12 @@ class App:
                         file_dir, regex=args.regex, onefile=self.path
                     )
                 ]
+            affected_decks = sorted({file.target_deck for directory in directories for file in directory.files})
+            backups_path = self.get_backup_path(self.path)
+            changed = self.snapshot_decks(affected_decks, backups_path)
+            if changed:
+                print("Cards already in Anki have been changed there - aborting.")
+                sys.exit(1)
             requests = []
             print("Getting tag list")
             requests.append(
@@ -907,7 +918,13 @@ class App:
                     "File Hashes": App.FILE_HASHES
                 }
             )
-            self.print_summary(directories)
+            change_counts = self.get_change_counts(directories)
+            if sum(change_counts) == 0:
+                print("Finished: no changes found.")
+                return
+            self.print_summary(*change_counts)
+            self.snapshot_decks(affected_decks, backups_path)
+
         if no_args:
             self.parser.print_help()
 
@@ -1043,8 +1060,18 @@ class App:
         App.SEEN_IDS.add(note_id)
 
     @staticmethod
-    def print_summary(directories):
-        """Print a one-line summary of what was added/updated/deleted."""
+    def get_backup_path(path: str) -> Path:
+        base = Path(path if os.path.isdir(path) else os.path.dirname(path))
+        return base / BACKUPS
+
+    @staticmethod
+    def snapshot_decks(affected_decks, backups_path) -> bool:
+        """Snapshot each affected deck."""
+        changed = [diff_deck(deck, backups_path) for deck in affected_decks]
+        return any(changed)
+
+    @staticmethod
+    def get_change_counts(directories):
         scanned_files = [
             f for directory in directories for f in directory.files
         ]
@@ -1054,9 +1081,14 @@ class App:
         )
         updated = sum(len(f.notes_to_edit) for f in scanned_files)
         deleted = sum(len(f.notes_to_delete) for f in scanned_files)
+        return added, updated, deleted, len(MEDIA)
+
+    @staticmethod
+    def print_summary(added, updated, deleted, added_media):
+        """Print a one-line summary of what was added/updated/deleted."""
         print(
-            f"Done! {added} note(s) added, {updated} updated, "
-            f"{deleted} deleted; {len(MEDIA)} media file(s) added."
+            f"Finished: {added} note(s) added, {updated} updated, "
+            f"{deleted} deleted; {added_media} media file(s) added."
         )
 
 
@@ -1491,7 +1523,7 @@ class Directory:
                     # Indicates we've seen this in a scan before,
                     # And that it hasn't changed.
                     # So, we don't need to do anything with it!
-                    print("Skipping", file.filename, "as we've scanned it before.")
+                    print("Skipping", file.filename, "as it's been scanned before.")
                 else:
                     file.scan_file()
                     files_changed.append(file)

@@ -51,7 +51,7 @@ def save_deck(notes, directory, filename_stem):
     filename = directory / f"{filename_stem}-{timestamp}.json"
     with open(filename, "w", encoding="utf-8") as f:
         json.dump({str(note_id): asdict(n) for note_id, n in notes.items()}, f, indent=2)
-    return filename
+    return filename.resolve()
 
 
 def load_prev_notes(directory, filename_stem):
@@ -93,13 +93,13 @@ def diff_deck(deck_name, directory) -> bool:
     filename_stem = to_filename(deck_name)
     prev_filename, prev_notes = load_prev_notes(directory, filename_stem)
     if prev_notes is not None and prev_notes == notes:
-        print(f"no changes to {deck_name}")
+        print(f"No changes to {deck_name}")
         return False
     filename = save_deck(notes, directory, filename_stem)
     if prev_notes is None:
-        print(f"saved {filename}")
+        print(f"Saved {len(notes)} to {filename}")
         return False
-    print(f"saved {filename} (previous {prev_filename})")
+    print(f"Saved {filename} (previous {prev_filename})")
     _diff_notes(notes, prev_notes)
     return True
 
@@ -107,4 +107,4 @@ def diff_deck(deck_name, directory) -> bool:
 if __name__ == "__main__":
     changed = diff_deck(sys.argv[2], sys.argv[1])
     if changed:
-        print(f"deck changed")
+        print(f"Deck changed")

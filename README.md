@@ -114,7 +114,11 @@ STARTI [Basic] Card B. Back: Epsilon ENDI
 
 This defines two cards, one using the verbose multiline format and one using the compact inline format.
 
-The `TARGET DECK` specifies the Anki deck to which the cards belong. If the deck does not already exist in Anki, it'll throw an exception like this:
+The `TARGET DECK` specifies the Anki deck to which the cards belong.
+
+**IMPORTANT:** each file needs to start with a `TARGET DECK` and you can't switch `TARGET DECK` within a file. Cards for different decks need to go in different files. You can split a deck over multiple files, i.e. there's no issues with multiple files having the same `TARGET DECK` value.
+
+If the deck does not already exist in Anki, it'll throw an exception like this when you try to upload it:
 
 ```
 Adding directory requests...
