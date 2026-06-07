@@ -5,7 +5,6 @@ import sys
 import urllib.request
 import urllib.parse
 import configparser
-import os
 import collections
 import markdown
 import base64
@@ -296,7 +295,7 @@ class FormatConverter:
         )
 
     @staticmethod
-    def get_images(html_text):
+    def get_images(html_text, base_dir: Path = Path(".")):
         """Get all the images that need to be added."""
         for match in FormatConverter.IMAGE_REGEXP.finditer(html_text):
             path = match.group(1)
@@ -305,18 +304,16 @@ class FormatConverter:
             path = urllib.parse.unquote(path)
             filename = Path(path).name
             if filename not in App.ADDED_MEDIA and filename not in MEDIA:
-                MEDIA[filename] = file_encode(path)
-                # Adds the filename and data to media_names
+                MEDIA[filename] = file_encode(base_dir / path)
 
     @staticmethod
-    def get_audio(html_text):
+    def get_audio(html_text, base_dir: Path = Path(".")):
         """Get all the audio that needs to be added."""
         for match in FormatConverter.SOUND_REGEXP.finditer(html_text):
             path = match.group(1)
             filename = Path(path).name
             if filename not in App.ADDED_MEDIA and filename not in MEDIA:
-                MEDIA[filename] = file_encode(path)
-                # Adds the filename and data to media_names
+                MEDIA[filename] = file_encode(base_dir / path)
 
     @staticmethod
     def path_to_filename(match_object):
@@ -346,7 +343,7 @@ class FormatConverter:
         )
 
     @staticmethod
-    def format(note_text, cloze=False):
+    def format(note_text, cloze=False, base_dir: Path = Path(".")):
         """Apply all format conversions to note_text."""
         note_text = FormatConverter.markdown_to_anki_math(note_text)
         # Extract the parts that are anki math
@@ -402,8 +399,8 @@ class FormatConverter:
                 html.escape(math_match),
                 1
             )
-        FormatConverter.get_images(note_text)
-        FormatConverter.get_audio(note_text)
+        FormatConverter.get_images(note_text, base_dir)
+        FormatConverter.get_audio(note_text, base_dir)
         note_text = FormatConverter.fix_image_src(note_text)
         note_text = FormatConverter.fix_audio_src(note_text)
         note_text = note_text.strip()
@@ -459,8 +456,9 @@ class Note:
         r"(?:<!--)?" + ID_PREFIX + r"(\d+)"
     )
 
-    def __init__(self, note_text):
+    def __init__(self, note_text, base_dir: Path = Path(".")):
         """Set up useful variables."""
+        self.base_dir = base_dir
         self.text = note_text
         self.lines = self.text.splitlines()
         id_match = Note.ID_REGEXP.match(self.lines[-1])
@@ -501,7 +499,8 @@ class Note:
                 cloze=(
                     "Cloze" in self.note_type
                     and CONFIG_DATA["CurlyCloze"]
-                )
+                ),
+                base_dir=self.base_dir
             )
             for key, value in fields.items()
         }
@@ -520,7 +519,8 @@ class InlineNote(Note):
     TYPE_REGEXP = re.compile(r"\[(.*?)]")  # So e.g. [Basic]
 
     # noinspection PyMissingConstructor
-    def __init__(self, note_text):
+    def __init__(self, note_text, base_dir: Path = Path(".")):
+        self.base_dir = base_dir
         self.text = note_text.strip()
         id_match = InlineNote.ID_REGEXP.search(self.text)
         if id_match is not None:
@@ -560,7 +560,8 @@ class InlineNote(Note):
                 cloze=(
                     "Cloze" in self.note_type
                     and CONFIG_DATA["CurlyCloze"]
-                )
+                ),
+                base_dir=self.base_dir
             )
             for key, value in fields.items()
         }
@@ -571,7 +572,8 @@ class RegexNote:
     ID_REGEXP_STR = r"\n?(?:<!--)?" + ID_PREFIX + r"(\d+).*"
     TAG_REGEXP_STR = r"(" + TAG_PREFIX + r".*)"
 
-    def __init__(self, match_object, note_type, tags=False, has_id=False):
+    def __init__(self, match_object, note_type, tags=False, has_id=False, base_dir: Path = Path(".")):
+        self.base_dir = base_dir
         self.match = match_object
         self.note_type = note_type
         self.groups = list(self.match.groups())
@@ -601,7 +603,8 @@ class RegexNote:
                 cloze=(
                     "Cloze" in self.note_type
                     and CONFIG_DATA["CurlyCloze"]
-                )
+                ),
+                base_dir=self.base_dir
             )
             for key, value in fields.items()
         }
@@ -1092,7 +1095,7 @@ class File:
         for match in App.FROZEN_REGEXP.finditer(self.file):
             note_type, fields = match.group(1), match.group(2)
             virtual_note = f"{note_type}\n{fields}"
-            parsed_fields = Note(virtual_note).fields
+            parsed_fields = Note(virtual_note, base_dir=self.filename.parent).fields
             self.frozen_fields_dict[note_type] = parsed_fields
 
     def setup_target_deck(self):
@@ -1158,7 +1161,7 @@ class File:
         self._begin_scan()
         for note_match in App.NOTE_REGEXP.finditer(self.file):
             note, position = note_match.group(1), note_match.end(1)
-            parsed = Note(note).parse(
+            parsed = Note(note, base_dir=self.filename.parent).parse(
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
@@ -1168,7 +1171,7 @@ class File:
         for inline_note_match in App.INLINE_REGEXP.finditer(self.file):
             note = inline_note_match.group(1)
             position = inline_note_match.end(1)
-            parsed = InlineNote(note).parse(
+            parsed = InlineNote(note, base_dir=self.filename.parent).parse(
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
@@ -1369,7 +1372,7 @@ class RegexFile(File):
         for match in find_ignore(regexp_tags_id, self.file, self.ignore_spans):
             # This note has id, so we update it
             self.ignore_spans.append(match.span())
-            parsed = RegexNote(match, note_type, tags=True, has_id=True).parse(
+            parsed = RegexNote(match, note_type, tags=True, has_id=True, base_dir=self.filename.parent).parse(
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
@@ -1384,7 +1387,7 @@ class RegexFile(File):
         for match in find_ignore(regexp_id, self.file, self.ignore_spans):
             # This note has id, so we update it
             self.ignore_spans.append(match.span())
-            parsed = RegexNote(match, note_type, tags=False, has_id=True).parse(
+            parsed = RegexNote(match, note_type, tags=False, has_id=True, base_dir=self.filename.parent).parse(
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
@@ -1399,7 +1402,7 @@ class RegexFile(File):
         for match in find_ignore(regexp_tags, self.file, self.ignore_spans):
             # This note has no id, so we add it
             self.ignore_spans.append(match.span())
-            parsed = RegexNote(match, note_type, tags=True, has_id=False).parse(
+            parsed = RegexNote(match, note_type, tags=True, has_id=False, base_dir=self.filename.parent).parse(
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
@@ -1414,7 +1417,7 @@ class RegexFile(File):
         for match in find_ignore(regexp, self.file, self.ignore_spans):
             # This note has no id, so we update it
             self.ignore_spans.append(match.span())
-            parsed = RegexNote(match, note_type, tags=False, has_id=False).parse(
+            parsed = RegexNote(match, note_type, tags=False, has_id=False, base_dir=self.filename.parent).parse(
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
@@ -1460,34 +1463,29 @@ class Directory:
     def __init__(self, abspath: str | Path, regex: bool = False):
         """Scan directory for files."""
         self.path = Path(abspath)
-        self.parent = Path.cwd()
         self.file_class: type[File] = RegexFile if regex else File
-        os.chdir(self.path)
-        try:
-            self.files = sorted(
-                [
-                    self.file_class(entry)
-                    for entry in Path(".").iterdir()
-                    if entry.is_file() and entry.suffix in App.SUPPORTED_EXTS
-                ], key=lambda f: [
-                    int(part) if part.isdigit() else part.lower()
-                    for part in re.split(r"(\d+)", f.filename.name)]
-            )
-            files_changed = []
-            for file in self.files:
-                if str(file.filename) in App.FILE_HASHES and (
-                    file.hash == App.FILE_HASHES[str(file.filename)]
-                ):
-                    # Indicates we've seen this in a scan before,
-                    # And that it hasn't changed.
-                    # So, we don't need to do anything with it!
-                    print("Skipping", file.filename, "as it's been scanned before.")
-                else:
-                    file.scan_file()
-                    files_changed.append(file)
-            self.files = files_changed
-        finally:
-            os.chdir(self.parent)
+        self.files = sorted(
+            [
+                self.file_class(entry)
+                for entry in self.path.iterdir()
+                if entry.is_file() and entry.suffix in App.SUPPORTED_EXTS
+            ], key=lambda f: [
+                int(part) if part.isdigit() else part.lower()
+                for part in re.split(r"(\d+)", f.filename.name)]
+        )
+        files_changed = []
+        for file in self.files:
+            if str(file.filename) in App.FILE_HASHES and (
+                file.hash == App.FILE_HASHES[str(file.filename)]
+            ):
+                # Indicates we've seen this in a scan before,
+                # And that it hasn't changed.
+                # So, we don't need to do anything with it!
+                print("Skipping", file.filename, "as it's been scanned before.")
+            else:
+                file.scan_file()
+                files_changed.append(file)
+        self.files = files_changed
 
     def requests_1(self):
         """Get the 1st HTTP request for this directory."""
@@ -1551,16 +1549,12 @@ class Directory:
             file.card_ids = AnkiConnect.parse(card_ids)
         for file in self.files:
             file.tags = tags
-        os.chdir(self.path)
-        try:
-            for file in self.files:
-                file.get_cards()
-                file.write_ids()
-                logging.info(f"Removing empty notes for file {file.filename}")
-                file.remove_empties()
-                file.write_file()
-        finally:
-            os.chdir(self.parent)
+        for file in self.files:
+            file.get_cards()
+            file.write_ids()
+            logging.info(f"Removing empty notes for file {file.filename}")
+            file.remove_empties()
+            file.write_file()
 
     def requests_2(self):
         """Get 2nd big request."""
