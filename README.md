@@ -274,6 +274,17 @@ There are two command line "update" arguments:
 
 For lots more information, see the [getting-started section](https://github.com/ObsidianToAnki/Obsidian_to_Anki/wiki/Steps-for-new-users) of the `Obsidian_to_Anki` wiki.
 
+Change clashes
+--------------
+
+The model is that the Markdown is the source of truth. However, it can be convenient to fix mistakes while reviewing cards in Anki. So before updating a deck in Anki, the `markdown_to_anki.py` script retrieves the current state of the deck from Anki, saves it as JSON and then compares it with the state of the deck that it saved after doing its last update. If the two are different it outputs the differences and then aborts rather than overwriting anything in Anki.
+
+It's then up to you to incorporate the differences into the Markdown files. This isn't done automatically.
+
+Once you've incorporated the changes, just run the script again. It will compare the JSON retrieved from Anki with the JSON that caused the abort and assuming there are no further differences, the update will work this time.
+
+Note that running the script for the second time will succeed irrespective of whether you actually incorporated the changes into the Markdown files.
+
 Development
 -----------
 
