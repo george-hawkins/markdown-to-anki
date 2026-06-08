@@ -905,7 +905,7 @@ class App:
             "path",
             default=False,
             nargs="?",
-            help="Path to the file or directory you want to scan."
+            help="Path to the directory you want to scan."
         )
         self.parser.add_argument(
             "-u", "--update",
