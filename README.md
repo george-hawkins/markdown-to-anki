@@ -304,8 +304,3 @@ And run the test suite and linter like so:
 (venv) $ python -m pytest
 (venv) $ ruff check .
 ```
-
-Notes
------
-
-Each time you run `markdown_to_anki.py`, it updates a file called `markdown_to_anki_data.json`, this just allows `markdown_to_anki.py` to avoid redoing work it's already done. It will ignore files and media that have not changed since the last time it was run - this can become important if you end up with huge amounts of cards and/or media. If you delete or lose this file, it'll be recreated and simply result in the related import being slower than it would be otherwise .
