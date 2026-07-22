@@ -17,7 +17,7 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-from anki_connect import ANKI_PORT, AnkiConnect
+from anki_connect import ANKI_PORT, AnkiConnect, AnkiConnectError
 from retrieve_deck import diff_deck
 
 logging.basicConfig(
@@ -898,6 +898,7 @@ class App:
             return
         self.print_summary(*change_counts)
         self.snapshot_decks(affected_decks, backups_path, output_diff=False)
+        self.prompt_sync()
 
     def setup_cli_parser(self):
         """Set up the command-line argument parser."""
@@ -1056,6 +1057,26 @@ class App:
             f"Finished: {added} note(s) added, {updated} updated, "
             f"{deleted} deleted; {added_media} media file(s) added."
         )
+
+    # ChangesRequired statuses (from Anki's sync.proto) that mean a one-way
+    # full sync is required, which AnkiConnect refuses to perform headlessly.
+    FULL_SYNC_STATUSES = {2, 3, 4}  # FULL_SYNC, FULL_DOWNLOAD, FULL_UPLOAD
+
+    @staticmethod
+    def prompt_sync():
+        """Ask the user whether to sync the changes to AnkiWeb."""
+        answer = input("Sync changes to AnkiWeb? [Y/n] ").strip().lower()
+        if answer not in ("", "y", "yes"):
+            return
+        try:
+            AnkiConnect.invoke("sync")
+            print("Synced to AnkiWeb.")
+        except AnkiConnectError as e:
+            match = re.match(r"Sync status (\d+)", str(e))
+            if match and int(match.group(1)) in App.FULL_SYNC_STATUSES:
+                print("A full sync is required; please sync manually in Anki.")
+            else:
+                raise
 
 
 class File:
