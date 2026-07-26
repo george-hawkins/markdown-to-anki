@@ -1,5 +1,23 @@
 import difflib
+import re
 from typing import Any
+
+
+# Substitutions applied to strings before they're compared, so that changes we
+# consider ignorable are never reported. Anki, for example, flip-flops between
+# "<br />" and "<br>" for line breaks; that churn shouldn't count as a change.
+# Add more (compiled pattern, replacement) pairs here as the need arises.
+_IGNORABLE_RULES = [
+    (re.compile(r"<br\s*/?>"), "<br>"),
+]
+
+
+def normalize_ignorable(text: str) -> str:
+    """Canonicalize ignorable variations so values that differ only by noise
+    (e.g. "<br />" vs "<br>") compare as equal."""
+    for pattern, replacement in _IGNORABLE_RULES:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 class ObjectDiff:
@@ -54,6 +72,8 @@ class ObjectDiff:
         return [f"{label}: {a!r} → {b!r}"]
 
     def _string_diff(self, a: str, b: str) -> list[str]:
+        a = normalize_ignorable(a)
+        b = normalize_ignorable(b)
         changes = []
         for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b).get_opcodes():
             if op == "equal":

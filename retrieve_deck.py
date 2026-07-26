@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from anki_connect import AnkiConnect
-from diff_utils import ObjectDiff
+from diff_utils import ObjectDiff, normalize_ignorable
 
 
 def _utc_isoformat(dt):
@@ -68,8 +68,13 @@ def load_prev_notes(directory: Path, filename_stem: str):
         return filename, {int(note_id): Note(**d) for note_id, d in json.load(f).items()}
 
 
+def _fields_equal(a: dict[str, str], b: dict[str, str]) -> bool:
+    return a.keys() == b.keys() and all(
+        normalize_ignorable(a[k]) == normalize_ignorable(b[k]) for k in a
+    )
+
 def _note_equal(a: Note, b: Note) -> bool:
-    return a.model_name == b.model_name and a.tags == b.tags and a.fields == b.fields and a.cards == b.cards
+    return a.model_name == b.model_name and a.tags == b.tags and _fields_equal(a.fields, b.fields) and a.cards == b.cards
 
 def _notes_equal(a:  dict[int, Note], b:  dict[int, Note]) -> bool:
     return a.keys() == b.keys() and all(_note_equal(a[k], b[k]) for k in b)

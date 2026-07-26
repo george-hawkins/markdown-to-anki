@@ -479,3 +479,53 @@ def test_scan_file_duplicate_id_raises(scan_env):
     f = mta.File(path)
     with pytest.raises(mta.DuplicateNoteIDError, match="42"):
         f.scan_file()
+
+
+# --------------------------------------------------------------------------
+# diff_utils: ignorable changes
+# --------------------------------------------------------------------------
+
+import diff_utils
+from retrieve_deck import Note, _note_equal
+
+
+def test_normalize_ignorable_canonicalizes_br_variants():
+    # All the <br> spellings Anki flip-flops between collapse to one form.
+    assert (
+        diff_utils.normalize_ignorable("a<br />b<br>c<br/>d")
+        == "a<br>b<br>c<br>d"
+    )
+
+
+def test_string_diff_ignores_br_only_change():
+    # A field that differs only by <br /> vs <br> produces no diff lines.
+    assert diff_utils.ObjectDiff().compare("line1<br />line2", "line1<br>line2") == []
+
+
+def test_string_diff_still_reports_real_change_alongside_br():
+    # A genuine change is still reported even when a <br> variant also flips.
+    changes = diff_utils.ObjectDiff().compare(
+        "hello<br />world", "hello<br>world extra"
+    )
+    assert changes  # non-empty
+    assert any("extra" in c for c in changes)
+
+
+def _note(front, back="b"):
+    return Note(
+        model_name="Basic",
+        tags=["t"],
+        fields={"Front": front, "Back": back},
+        cards=[1],
+        mod="2026-07-24T00:00:00Z",
+    )
+
+
+def test_note_equal_ignores_br_only_field_change():
+    # The change-detection gate treats a br-only field difference as equal, so
+    # no new snapshot is saved and nothing is reported as changed.
+    assert _note_equal(_note("x<br />y"), _note("x<br>y"))
+
+
+def test_note_equal_detects_real_field_change():
+    assert not _note_equal(_note("x<br />y"), _note("x<br>z"))
