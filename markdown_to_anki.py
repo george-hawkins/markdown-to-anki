@@ -217,6 +217,10 @@ class FormatConverter:
     )
     URL_REGEXP = re.compile(r"https?://")
 
+    # A field whose content is nothing but HTML comment(s), e.g.
+    # "Reading:<!-- no reading -->", is treated as empty.
+    ONLY_COMMENT_REGEXP = re.compile(r"\s*(?:<!--[\s\S]*?-->\s*)+")
+
     PARA_OPEN = "<p>"
     PARA_CLOSE = "</p>"
 
@@ -295,6 +299,11 @@ class FormatConverter:
         )
 
     @staticmethod
+    def is_only_comment(text):
+        """Check whether text is nothing but HTML comment(s) and whitespace."""
+        return bool(FormatConverter.ONLY_COMMENT_REGEXP.fullmatch(text))
+
+    @staticmethod
     def get_images(html_text, base_dir: Path = Path(".")):
         """Get all the images that need to be added."""
         for match in FormatConverter.IMAGE_REGEXP.finditer(html_text):
@@ -345,6 +354,10 @@ class FormatConverter:
     @staticmethod
     def format(note_text, cloze=False, base_dir: Path = Path(".")):
         """Apply all format conversions to note_text."""
+        if FormatConverter.is_only_comment(note_text):
+            # A field that's just a comment counts as empty, so nothing of it
+            # is sent to Anki.
+            return ""
         note_text = FormatConverter.markdown_to_anki_math(note_text)
         # Extract the parts that are anki math
         math_matches = [

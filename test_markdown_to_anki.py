@@ -192,6 +192,27 @@ def test_format_block_math():
     assert mta.FormatConverter.format("$$a+b$$") == r"\[a+b\]"
 
 
+def test_format_comment_only_field_is_empty():
+    assert mta.FormatConverter.format("<!-- no reading -->") == ""
+
+
+def test_format_comment_only_field_with_whitespace_is_empty():
+    assert mta.FormatConverter.format("  \n <!-- no\nreading -->  \n") == ""
+
+
+def test_format_multiple_comments_only_is_empty():
+    assert mta.FormatConverter.format("<!-- a --> <!-- b -->") == ""
+
+
+def test_format_keeps_comment_alongside_content():
+    assert mta.FormatConverter.format("text <!-- c -->") == "text <!-- c -->"
+
+
+def test_note_comment_only_field_treated_as_empty():
+    note = mta.Note("Basic\nFront: q\nBack:<!-- no answer -->")
+    assert note.parse("D").note["fields"] == {"Front": "q", "Back": ""}
+
+
 def test_format_cloze_when_enabled():
     assert mta.FormatConverter.format("the {answer} is", cloze=True) == (
         "the {{c1::answer}} is"
