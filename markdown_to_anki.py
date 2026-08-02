@@ -789,6 +789,10 @@ class App:
 
     SUPPORTED_EXTS = [".md", ".txt"]
 
+    # A file that, if present in a scanned directory, lists (one filename per
+    # line) the files in that directory to skip.
+    IGNORE_FILE = "IGNORE.txt"
+
     # Populated at runtime: get_fields()/get_ids() and Data.load_data_file()
     # set the data attributes; gen_regexp() sets the regex attributes.
     FIELDS_DICT = {}
@@ -1481,11 +1485,14 @@ class Directory:
         """Scan directory for files."""
         self.path = path
         self.file_class: type[File] = RegexFile if regex else File
+        ignored_names = self._ignored_names()
         self.files = sorted(
             [
                 self.file_class(entry)
                 for entry in self.path.iterdir()
-                if entry.is_file() and entry.suffix in App.SUPPORTED_EXTS
+                if entry.is_file()
+                and entry.suffix in App.SUPPORTED_EXTS
+                and entry.name not in ignored_names
             ], key=lambda f: [
                 int(part) if part.isdigit() else part.lower()
                 for part in re.split(r"(\d+)", f.filename.name)]
@@ -1503,6 +1510,19 @@ class Directory:
                 file.scan_file()
                 files_changed.append(file)
         self.files = files_changed
+
+    def _ignored_names(self) -> set[str]:
+        """Read this directory's IGNORE.txt (if any) and return the set of
+        filenames to skip. The ignore file itself is always skipped."""
+        ignored = {App.IGNORE_FILE}
+        ignore_path = self.path / App.IGNORE_FILE
+        if ignore_path.is_file():
+            with open(ignore_path, encoding="utf-8") as f:
+                for line in f:
+                    name = line.strip()
+                    if name:
+                        ignored.add(name)
+        return ignored
 
     def requests_1(self):
         """Get the 1st HTTP request for this directory."""

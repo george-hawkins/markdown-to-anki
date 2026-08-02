@@ -529,3 +529,30 @@ def test_note_equal_ignores_br_only_field_change():
 
 def test_note_equal_detects_real_field_change():
     assert not _note_equal(_note("x<br />y"), _note("x<br>z"))
+
+
+# --------------------------------------------------------------------------
+# Directory: IGNORE.txt
+# --------------------------------------------------------------------------
+
+def test_directory_skips_files_listed_in_ignore(scan_env):
+    (scan_env / "a.md").write_text("hello\n")
+    (scan_env / "b.md").write_text("world\n")
+    (scan_env / "c.txt").write_text("plain\n")
+    (scan_env / "IGNORE.txt").write_text("b.md\n\nc.txt\n")
+
+    directory = mta.Directory(scan_env)
+    scanned = {f.filename.name for f in directory.files}
+
+    # b.md and c.txt are ignored; IGNORE.txt itself is never scanned.
+    assert scanned == {"a.md"}
+
+
+def test_directory_scans_all_when_no_ignore_file(scan_env):
+    (scan_env / "a.md").write_text("hello\n")
+    (scan_env / "b.md").write_text("world\n")
+
+    directory = mta.Directory(scan_env)
+    scanned = {f.filename.name for f in directory.files}
+
+    assert scanned == {"a.md", "b.md"}
