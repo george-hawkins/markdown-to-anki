@@ -65,7 +65,7 @@ Loading configuration file...
 Loaded successfully!
 Data file does not exist, creating...
 Creating data file...
-usage: markdown_to_anki.py [-h] [-u] [-r] [-m] [-R] [path]
+usage: markdown_to_anki.py [-h] [-u] [-r] [-m] [-R] [-o] [path]
 
 Add cards to Anki from a markdown or text file.
 
@@ -78,6 +78,7 @@ options:
   -r, --regex        Use custom regex syntax.
   -m, --mediaupdate  Force addition of media files.
   -R, --recurse      Recursively scan subfolders.
+  -o, --offline      Do not sync with AnkiWeb before and after updating Anki.
 ```
 
 Several things happen:

@@ -863,12 +863,18 @@ class App:
                 dirs[:] = [d for d in dirs if not d.startswith(".")]
         else:
             directories = [Directory(self.path, regex=args.regex)]
+
+        if not args.offline and not self.sync():
+            print("Aborting.")
+            sys.exit(1)
+
         affected_decks = sorted({file.target_deck for directory in directories for file in directory.files})
         backups_path = self.path / BACKUPS
         changed = self.snapshot_decks(affected_decks, backups_path)
         if changed:
             print("Cards already in Anki have been changed there - aborting.")
             sys.exit(1)
+
         requests = []
         print("Getting tag list")
         requests.append(
@@ -915,7 +921,9 @@ class App:
             return
         self.print_summary(*change_counts)
         self.snapshot_decks(affected_decks, backups_path, output_diff=False)
-        self.prompt_sync()
+        # The changes are already in Anki, so a failure here is not fatal.
+        if not args.offline:
+            self.sync()
 
     def setup_cli_parser(self):
         """Set up the command-line argument parser."""
@@ -949,6 +957,12 @@ class App:
             action="store_true",
             dest="recurse",
             help="Recursively scan subfolders."
+        )
+        self.parser.add_argument(
+            "-o", "--offline",
+            action="store_true",
+            dest="offline",
+            help="Do not sync with AnkiWeb before and after updating Anki."
         )
 
     @staticmethod
@@ -1080,20 +1094,20 @@ class App:
     FULL_SYNC_STATUSES = {2, 3, 4}  # FULL_SYNC, FULL_DOWNLOAD, FULL_UPLOAD
 
     @staticmethod
-    def prompt_sync():
-        """Ask the user whether to sync the changes to AnkiWeb."""
-        answer = input("Sync changes to AnkiWeb? [Y/n] ").strip().lower()
-        if answer not in ("", "y", "yes"):
-            return
+    def sync() -> bool:
+        """Sync the collection with AnkiWeb."""
         try:
             AnkiConnect.invoke("sync")
             print("Synced to AnkiWeb.")
+            return True
         except AnkiConnectError as e:
-            match = re.match(r"Sync status (\d+)", str(e))
+            error = str(e)
+            match = re.match(r"Sync status (\d+)", error)
             if match and int(match.group(1)) in App.FULL_SYNC_STATUSES:
                 print("A full sync is required; please sync manually in Anki.")
             else:
-                raise
+                print(f"Sync failed with error '{error}'")
+            return False
 
 
 class File:

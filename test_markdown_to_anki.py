@@ -577,3 +577,24 @@ def test_directory_scans_all_when_no_ignore_file(scan_env):
     scanned = {f.filename.name for f in directory.files}
 
     assert scanned == {"a.md", "b.md"}
+
+
+# --------------------------------------------------------------------------
+# App.sync
+# --------------------------------------------------------------------------
+
+def sync_error(monkeypatch, capsys, error):
+    """Report what App.sync() prints when AnkiConnect fails with `error`."""
+    def invoke(action, **params):
+        raise anki_connect.AnkiConnectError(error)
+    monkeypatch.setattr(mta.AnkiConnect, "invoke", invoke)
+    assert mta.App.sync() is False
+    return capsys.readouterr().out
+
+
+def test_sync_distinguishes_full_sync_status_from_other_errors(monkeypatch, capsys):
+    # Only the ChangesRequired statuses mean "sync manually in Anki"; status 1
+    # (NORMAL_SYNC) and non-status errors are just reported as-is.
+    assert "full sync" in sync_error(monkeypatch, capsys, "Sync status 3")
+    assert "full sync" not in sync_error(monkeypatch, capsys, "Sync status 1")
+    assert "logged in" in sync_error(monkeypatch, capsys, "Anki must be logged in")
