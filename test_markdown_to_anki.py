@@ -467,6 +467,7 @@ def scan_env(tmp_path):
     )
     mta.App.EXISTING_IDS = [42]
     mta.App.SEEN_IDS = set()
+    mta.CONFIG_DATA["Comment"] = True
     return tmp_path
 
 
@@ -536,6 +537,69 @@ def test_scan_file_duplicate_id_raises(scan_env):
     f = mta.File(path)
     with pytest.raises(mta.DuplicateNoteIDError, match="42"):
         f.scan_file()
+
+
+# --------------------------------------------------------------------------
+# Partial add failures (a note Anki refuses must not lose the others' ids)
+# --------------------------------------------------------------------------
+
+def test_parse_add_result_records_failure_instead_of_raising(scan_env):
+    path = scan_env / "partial.md"
+    path.write_text(
+        "START\nBasic\nFront: dup\nBack: b\nEND\n"
+        "START\nBasic\nFront: fine\nBack: b\nEND\n"
+    )
+    f = mta.File(path)
+    f.scan_file()
+    mta.App.ADD_FAILURES = []
+    responses = [
+        {"result": None, "error": "cannot create note because it is a duplicate"},
+        {"result": 1234, "error": None},
+    ]
+    f.note_ids = [
+        f.parse_add_result(response, index)
+        for index, response in enumerate(responses)
+    ]
+    # The rejected note yields None rather than blowing up the whole run...
+    assert f.note_ids == [None, 1234]
+    # ...and is reported with enough context to find it.
+    assert len(mta.App.ADD_FAILURES) == 1
+    assert "'dup'" in mta.App.ADD_FAILURES[0]
+    assert "duplicate" in mta.App.ADD_FAILURES[0]
+
+
+def test_write_ids_keeps_ids_aligned_when_an_add_failed(scan_env):
+    # The id of the note Anki accepted must land on *that* note, not slide up
+    # onto the one it refused.
+    path = scan_env / "align.md"
+    path.write_text(
+        "START\nBasic\nFront: refused\nBack: b\nEND\n"
+        "START\nBasic\nFront: accepted\nBack: b\nEND\n"
+    )
+    f = mta.File(path)
+    f.scan_file()
+    f.note_ids = [None, 1234]
+    f.write_ids()
+    refused, accepted = f.file.split("START\nBasic\nFront: accepted")
+    assert "ID: 1234" not in refused
+    assert "<!--ID: 1234-->" in accepted
+
+
+def test_write_ids_pairs_inline_ids_with_inline_positions(scan_env):
+    # notes_to_add and inline_notes_to_add share one note_ids list; a failure
+    # among the block notes must not shift the inline ids either.
+    path = scan_env / "inline.md"
+    path.write_text(
+        "START\nBasic\nFront: refused\nBack: b\nEND\n"
+        "STARTI[Basic] Front: inline Back: b ENDI\n"
+    )
+    f = mta.File(path)
+    f.scan_file()
+    assert len(f.notes_to_add) == 1 and len(f.inline_notes_to_add) == 1
+    f.note_ids = [None, 5678]
+    f.write_ids()
+    assert "ID: 5678" in f.file.split("STARTI")[1]
+    assert "ID: 5678" not in f.file.split("STARTI")[0]
 
 
 # --------------------------------------------------------------------------

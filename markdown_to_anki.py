@@ -823,6 +823,8 @@ class App:
     FROZEN_REGEXP = None
     # Note IDs seen so far this run, to detect accidentally duplicated IDs.
     SEEN_IDS = set()
+    # Notes Anki refused to add, described for the end-of-run report.
+    ADD_FAILURES: list[str] = []
 
     def __init__(self):
         """Execute the main functionality of the script."""
@@ -855,6 +857,7 @@ class App:
             return
 
         App.SEEN_IDS = set()
+        App.ADD_FAILURES = []
         self.path: Path = Path(args.path)
         if not self.path.is_dir():
             raise NotADirectoryError(f"{self.path} is not a directory.")
@@ -928,6 +931,22 @@ class App:
         # The changes are already in Anki, so a failure here is not fatal.
         if not args.offline:
             self.sync()
+        self.report_add_failures()
+
+    @staticmethod
+    def report_add_failures():
+        """Report the notes Anki refused, and exit non-zero if there were any.
+
+        Reported at the very end, so that the ids of the notes Anki *did*
+        accept have already been written back to their files.
+        """
+        if not App.ADD_FAILURES:
+            return
+        print(f"\n{len(App.ADD_FAILURES)} note(s) could not be added:")
+        for failure in App.ADD_FAILURES:
+            print(f"  {failure}")
+            logging.error(f"Could not add note: {failure}")
+        sys.exit(1)
 
     def setup_cli_parser(self):
         """Set up the command-line argument parser."""
@@ -1078,7 +1097,7 @@ class App:
             f for directory in directories for f in directory.files
         ]
         added = sum(
-            len(f.notes_to_add) + len(f.inline_notes_to_add)
+            sum(note_id is not None for note_id in f.note_ids)
             for f in scanned_files
         )
         updated = sum(len(f.notes_to_edit) for f in scanned_files)
@@ -1163,6 +1182,30 @@ class File:
             self.global_tags = result.group(1)
         else:
             self.global_tags = ""
+
+    def describe_added(self, index):
+        """Identify the index'th note queued for adding, for error messages."""
+        note = (self.notes_to_add + self.inline_notes_to_add)[index]
+        first_field = field_names_for(note["modelName"])[0]
+        value = note["fields"][first_field]
+        if len(value) > 60:
+            value = value[:60] + "..."
+        return f"{self.filename}, {first_field} {value!r}"
+
+    def parse_add_result(self, response, index):
+        """The id of a newly added note, or None if Anki refused to add it.
+
+        A note Anki rejects (it's empty, or a duplicate of one already in the
+        collection) must not abort the run. The notes Anki *did* accept in the
+        same batch are already in the collection, so their ids have to reach
+        the file -- otherwise the next run tries to add them all over again and
+        every one of them comes back as a duplicate.
+        """
+        try:
+            return AnkiConnect.parse(response)
+        except AnkiConnectError as error:
+            App.ADD_FAILURES.append(f"{self.describe_added(index)}: {error}")
+            return None
 
     def line_of(self, position) -> int:
         """The 1-based line number of a character offset into self.file."""
@@ -1267,31 +1310,35 @@ class File:
             result += "\n"
         return result
 
+    def id_insertions(self):
+        """(position, id text) pairs for the notes Anki actually created.
+
+        Positions are paired with ids *before* the refused ones are dropped:
+        filtering first would slide every later id onto the wrong note.
+        """
+        return [
+            (position, self.id_to_str(note_id, comment=CONFIG_DATA["Comment"]))
+            for position, note_id in zip(
+                self.id_indexes, self.note_ids[:len(self.notes_to_add)]
+            )
+            if note_id is not None
+        ] + [
+            (
+                position,
+                self.id_to_str(
+                    note_id, inline=True, comment=CONFIG_DATA["Comment"]
+                )
+            )
+            for position, note_id in zip(
+                self.inline_id_indexes, self.note_ids[len(self.notes_to_add):]
+            )
+            if note_id is not None
+        ]
+
     def write_ids(self):
         """Write the identifiers to self.file."""
         logging.info(f"Writing new note IDs to file,{self.filename}...")
-        self.file = string_insert(
-            self.file, list(
-                zip(
-                    self.id_indexes, [
-                        self.id_to_str(note_id, comment=CONFIG_DATA["Comment"])
-                        for note_id in self.note_ids[:len(self.notes_to_add)]
-                        if note_id is not None
-                    ]
-                )
-            ) + list(
-                zip(
-                    self.inline_id_indexes, [
-                        self.id_to_str(
-                            note_id, inline=True,
-                            comment=CONFIG_DATA["Comment"]
-                        )
-                        for note_id in self.note_ids[len(self.notes_to_add):]
-                        if note_id is not None
-                    ]
-                )
-            )
-        )
+        self.file = string_insert(self.file, self.id_insertions())
 
     def remove_empties(self):
         """Remove empty notes from self.file."""
@@ -1522,15 +1569,16 @@ class RegexFile(File):
         """Write the identifiers to self.file."""
         logging.info(f"Writing new note IDs to file,{self.filename}...")
         self.file = string_insert(
-            self.file, zip(
-                self.id_indexes, [
+            self.file, [
+                (
+                    position,
                     "\n" + File.id_to_str(
                         note_id, comment=CONFIG_DATA["Comment"]
                     )
-                    for note_id in self.note_ids
-                    if note_id is not None
-                ]
-            )
+                )
+                for position, note_id in zip(self.id_indexes, self.note_ids)
+                if note_id is not None
+            ]
         )
         self.fix_newline_ids()
 
@@ -1636,8 +1684,8 @@ class Directory:
         cards_ids = AnkiConnect.parse(response[1])
         for note_ids, file in zip(notes_ids, self.files):
             file.note_ids = [
-                AnkiConnect.parse(response)
-                for response in AnkiConnect.parse(note_ids)
+                file.parse_add_result(response, index)
+                for index, response in enumerate(AnkiConnect.parse(note_ids))
             ]
         for card_ids, file in zip(cards_ids, self.files):
             file.card_ids = AnkiConnect.parse(card_ids)
