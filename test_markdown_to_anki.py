@@ -489,6 +489,42 @@ def test_scan_file_sorts_add_edit_delete(scan_env):
     assert f.notes_to_delete == [99]
 
 
+def test_scan_file_empty_first_field_raises(scan_env):
+    # Anki refuses a note whose first field is empty, so catch it during the
+    # scan -- naming the file and line -- rather than mid-upload.
+    path = scan_env / "empty.md"
+    path.write_text(
+        "Filler line.\n"
+        "START\nBasic\nFront:\nBack: an answer with no question\nEND\n"
+    )
+    f = mta.File(path)
+    with pytest.raises(mta.EmptyNoteError) as exc:
+        f.scan_file()
+    assert "line 2" in str(exc.value)
+    assert "'Front'" in str(exc.value)
+
+
+def test_scan_file_comment_only_first_field_raises(scan_env):
+    # A field holding only an HTML comment already counts as empty elsewhere,
+    # so it must trip the same check.
+    path = scan_env / "comment.md"
+    path.write_text(
+        "START\nBasic\nFront: <!-- todo -->\nBack: b\nEND\n"
+    )
+    f = mta.File(path)
+    with pytest.raises(mta.EmptyNoteError):
+        f.scan_file()
+
+
+def test_scan_file_empty_later_field_is_fine(scan_env):
+    # Only the *first* field is required; the rest may be blank.
+    path = scan_env / "ok.md"
+    path.write_text("START\nBasic\nFront: q\nBack:\nEND\n")
+    f = mta.File(path)
+    f.scan_file()
+    assert f.notes_to_add[0]["fields"] == {"Front": "q", "Back": ""}
+
+
 def test_scan_file_duplicate_id_raises(scan_env):
     # Same ID appearing twice (e.g. a copied note whose ID wasn't removed)
     # must raise rather than silently double-updating the original note.

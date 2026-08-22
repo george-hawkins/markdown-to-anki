@@ -180,6 +180,10 @@ class UnknownNoteTypeError(Exception):
     """Raised when a note names a type that doesn't exist in Anki."""
 
 
+class EmptyNoteError(Exception):
+    """Raised when a note's first field is empty, which Anki rejects."""
+
+
 class FormatConverter:
     """Converting Markdown formatting to Anki formatting."""
 
@@ -1160,6 +1164,26 @@ class File:
         else:
             self.global_tags = ""
 
+    def line_of(self, position) -> int:
+        """The 1-based line number of a character offset into self.file."""
+        return self.file.count("\n", 0, position) + 1
+
+    def check_not_empty(self, parsed, position):
+        """Reject a note that Anki would refuse to create as empty.
+
+        Anki only accepts a note whose first field has content, and its error
+        ("cannot create note because it is empty") says nothing about which
+        note is at fault. So catch it here, while we still know where the
+        note came from, rather than mid-upload.
+        """
+        first_field = field_names_for(parsed.note["modelName"])[0]
+        if not parsed.note["fields"][first_field].strip():
+            raise EmptyNoteError(
+                f"The note at line {self.line_of(position)} of "
+                f"{self.filename} has an empty {first_field!r} field - Anki "
+                "won't accept a note whose first field is empty."
+            )
+
     def warn_missing_id(self, note_id):
         """Warn that a note id present in the file isn't in Anki."""
         print(
@@ -1213,6 +1237,7 @@ class File:
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
+            self.check_not_empty(parsed, note_match.start())
             self._dispatch_note(
                 parsed, position, self.notes_to_add, self.id_indexes
             )
@@ -1223,6 +1248,7 @@ class File:
                 self.target_deck,
                 frozen_fields_dict=self.frozen_fields_dict
             )
+            self.check_not_empty(parsed, inline_note_match.start())
             self._dispatch_note(
                 parsed, position,
                 self.inline_notes_to_add, self.inline_id_indexes
@@ -1427,6 +1453,7 @@ class RegexFile(File):
             if parsed is None:
                 # Cloze note had no detected clozes -- skip it.
                 continue
+            self.check_not_empty(parsed, match.start())
             App.register_id(parsed.id, self.filename)
             if parsed.id not in App.EXISTING_IDS:
                 self.warn_missing_id(parsed.id)
@@ -1442,6 +1469,7 @@ class RegexFile(File):
             if parsed is None:
                 # Cloze note had no detected clozes -- skip it.
                 continue
+            self.check_not_empty(parsed, match.start())
             App.register_id(parsed.id, self.filename)
             if parsed.id not in App.EXISTING_IDS:
                 self.warn_missing_id(parsed.id)
@@ -1457,6 +1485,7 @@ class RegexFile(File):
             if parsed is None:
                 # Cloze note had no detected clozes -- skip it.
                 continue
+            self.check_not_empty(parsed, match.start())
             parsed.note["tags"] += self.global_tags.split(TAG_SEP)
             self.notes_to_add.append(
                 parsed.note
@@ -1472,6 +1501,7 @@ class RegexFile(File):
             if parsed is None:
                 # Cloze note had no detected clozes -- skip it.
                 continue
+            self.check_not_empty(parsed, match.start())
             parsed.note["tags"] += self.global_tags.split(TAG_SEP)
             self.notes_to_add.append(
                 parsed.note
