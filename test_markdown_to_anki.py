@@ -9,6 +9,7 @@ Run with:  ./venv/bin/python -m pytest
 """
 
 import re
+import urllib.error
 
 import pytest
 
@@ -365,6 +366,20 @@ def test_regexnote_cloze_without_clozes_is_skipped():
 
 
 # --------------------------------------------------------------------------
+# AnkiConnect.invoke
+# --------------------------------------------------------------------------
+
+def test_anki_invoke_reports_a_lost_connection_as_an_anki_connect_error(monkeypatch):
+    # E.g. Anki was closed mid-run: the caller gets the one error type it
+    # already has to handle, naming the request, rather than a urllib one.
+    def urlopen(request):
+        raise urllib.error.URLError("[Errno 61] Connection refused")
+    monkeypatch.setattr(anki_connect.urllib.request, "urlopen", urlopen)
+    with pytest.raises(anki_connect.AnkiConnectError, match="'findNotes' request.*Connection refused"):
+        anki_connect.AnkiConnect.invoke("findNotes", query="")
+
+
+# --------------------------------------------------------------------------
 # AnkiConnect.parse
 # --------------------------------------------------------------------------
 
@@ -683,13 +698,36 @@ def test_directory_scans_all_when_no_ignore_file(scan_env):
 # App.sync
 # --------------------------------------------------------------------------
 
-def sync_error(monkeypatch, capsys, error):
-    """Report what App.sync() prints when AnkiConnect fails with `error`."""
+def sync_replying(monkeypatch, reply):
+    """Make AnkiConnect answer the sync, which must be sent as a one-item `multi`, with `reply`."""
     def invoke(action, **params):
-        raise anki_connect.AnkiConnectError(error)
+        # A standalone `sync` is only acknowledged by newer versions of
+        # AnkiConnect; it's `multi` that waits for the sync to finish.
+        assert action == "multi"
+        assert params == {"actions": [mta.AnkiConnect.request("sync")]}
+        return [reply]
     monkeypatch.setattr(mta.AnkiConnect, "invoke", invoke)
+
+
+def sync_error(monkeypatch, capsys, error):
+    """Report what App.sync() prints when the sync fails with `error`."""
+    sync_replying(monkeypatch, {"result": None, "error": error})
     assert mta.App.sync() is False
     return capsys.readouterr().out
+
+
+def test_sync_waits_for_the_sync_by_sending_it_as_a_multi(monkeypatch, capsys):
+    sync_replying(monkeypatch, {"result": None, "error": None})
+    assert mta.App.sync() is True
+    assert "Synced to AnkiWeb." in capsys.readouterr().out
+
+
+def test_sync_fails_if_the_request_itself_fails(monkeypatch, capsys):
+    def invoke(action, **params):
+        raise anki_connect.AnkiConnectError("Collection lifecycle operation is active.")
+    monkeypatch.setattr(mta.AnkiConnect, "invoke", invoke)
+    assert mta.App.sync() is False
+    assert "lifecycle" in capsys.readouterr().out
 
 
 def test_sync_distinguishes_full_sync_status_from_other_errors(monkeypatch, capsys):
@@ -698,3 +736,55 @@ def test_sync_distinguishes_full_sync_status_from_other_errors(monkeypatch, caps
     assert "full sync" in sync_error(monkeypatch, capsys, "Sync status 3")
     assert "full sync" not in sync_error(monkeypatch, capsys, "Sync status 1")
     assert "logged in" in sync_error(monkeypatch, capsys, "Anki must be logged in")
+
+
+# --------------------------------------------------------------------------
+# main
+# --------------------------------------------------------------------------
+
+def main_stopped_by_anki(monkeypatch, capsys, tmp_path, changing_anki):
+    """Report what main() prints, and logs, when Anki refuses a request part way through a run."""
+    config = tmp_path / "config.ini"
+    config.touch()
+    logged = []
+
+    def init(self):
+        mta.App.CHANGING_ANKI = changing_anki
+        raise anki_connect.AnkiConnectError("Collection lifecycle operation is active.")
+
+    monkeypatch.setattr(mta, "CONFIG_PATH", config)
+    monkeypatch.setattr(mta.App, "CHANGING_ANKI", False)
+    monkeypatch.setattr(mta.App, "__init__", init)
+    monkeypatch.setattr(mta.logging, "exception", lambda message: logged.append(message))
+    with pytest.raises(SystemExit) as exit_info:
+        mta.main()
+    assert exit_info.value.code == 1
+    assert len(logged) == 1  # The stack trace goes to the log instead.
+    return capsys.readouterr().out
+
+
+def test_main_reports_an_anki_error_without_a_stack_trace(monkeypatch, capsys, tmp_path):
+    out = main_stopped_by_anki(monkeypatch, capsys, tmp_path, changing_anki=False)
+    assert "Stopped: Collection lifecycle operation is active." in out
+    assert "not yet changed any notes" in out
+    assert mta.LOG_FILE in out
+
+
+def test_main_warns_of_a_partial_update_if_anki_fails_once_changes_have_started(monkeypatch, capsys, tmp_path):
+    out = main_stopped_by_anki(monkeypatch, capsys, tmp_path, changing_anki=True)
+    assert "may be only partly applied" in out
+    assert "not yet changed" not in out
+
+
+def test_main_leaves_other_errors_alone(monkeypatch, tmp_path):
+    # Only Anki's refusals are expected; anything else is a bug worth a trace.
+    config = tmp_path / "config.ini"
+    config.touch()
+
+    def init(self):
+        raise ValueError("a bug")
+
+    monkeypatch.setattr(mta, "CONFIG_PATH", config)
+    monkeypatch.setattr(mta.App, "__init__", init)
+    with pytest.raises(ValueError):
+        mta.main()

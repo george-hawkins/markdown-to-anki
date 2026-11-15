@@ -1,3 +1,4 @@
+import http.client
 import json
 import urllib.request
 
@@ -22,11 +23,16 @@ class AnkiConnect:
         request_json = json.dumps(
             AnkiConnect.request(action, **params)
         ).encode("utf-8")
-        response = json.load(urllib.request.urlopen(
-            urllib.request.Request(
-                f"http://localhost:{ANKI_PORT}", request_json
-            )
-        ))
+        try:
+            response = json.load(urllib.request.urlopen(
+                urllib.request.Request(
+                    f"http://localhost:{ANKI_PORT}", request_json
+                )
+            ))
+        except (OSError, http.client.HTTPException, json.JSONDecodeError) as error:
+            # E.g. Anki was closed mid-run. Only the exchange with Anki is
+            # covered here, so this can't mask an unrelated file error.
+            raise AnkiConnectError(f"could not complete the '{action}' request to Anki ({error})") from error
         return AnkiConnect.parse(response)
 
     @staticmethod

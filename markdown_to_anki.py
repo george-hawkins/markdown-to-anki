@@ -20,8 +20,10 @@ from typing import Any
 from anki_connect import ANKI_PORT, AnkiConnect, AnkiConnectError
 from retrieve_deck import diff_deck
 
+LOG_FILE = "markdown_to_anki_log.log"
+
 logging.basicConfig(
-    filename="markdown_to_anki_log.log",
+    filename=LOG_FILE,
     level=logging.DEBUG,
     format="%(asctime)s:::%(levelname)s:::%(funcName)s:::%(message)s"
 )
@@ -167,9 +169,25 @@ def wait_for_port(port, host="localhost", timeout=5.0):
 
 def main():
     """Main functionality of script."""
-    if not CONFIG_PATH.exists():
-        Config.update_config()
-    App()
+    try:
+        if not CONFIG_PATH.exists():
+            Config.update_config()
+        App()
+    except AnkiConnectError as error:
+        # Anki refusing a request (e.g. it's busy), or going away mid-run, is
+        # to be expected now and then, so say what happened rather than
+        # showing a stack trace. The trace still goes to the log file.
+        logging.exception("Stopped by an AnkiConnect error")
+        print(f"Stopped: {error}")
+        if App.CHANGING_ANKI:
+            print(
+                "This run had already started changing Anki, so its changes may be only partly "
+                "applied - check Anki and your files before running again."
+            )
+        else:
+            print("This run had not yet changed any notes in Anki.")
+        print(f"The full stack trace is in {LOG_FILE}.")
+        sys.exit(1)
 
 
 class DuplicateNoteIDError(Exception):
@@ -823,6 +841,9 @@ class App:
     FROZEN_REGEXP = None
     # Note IDs seen so far this run, to detect accidentally duplicated IDs.
     SEEN_IDS = set()
+    # Whether this run has started sending changes to Anki, i.e. whether a
+    # failure from here on may leave them only partly applied.
+    CHANGING_ANKI = False
     # Notes Anki refused to add, described for the end-of-run report.
     ADD_FAILURES: list[str] = []
 
@@ -858,6 +879,7 @@ class App:
 
         App.SEEN_IDS = set()
         App.ADD_FAILURES = []
+        App.CHANGING_ANKI = False
         self.path: Path = Path(args.path)
         if not self.path.is_dir():
             raise NotADirectoryError(f"{self.path} is not a directory.")
@@ -896,6 +918,7 @@ class App:
         print("Adding directory requests...")
         for directory in directories:
             requests.append(directory.requests_1())
+        App.CHANGING_ANKI = True
         result = AnkiConnect.invoke(
             "multi",
             actions=requests
@@ -1113,14 +1136,24 @@ class App:
         )
 
     # ChangesRequired statuses (from Anki's sync.proto) that mean a one-way
-    # full sync is required, which AnkiConnect refuses to perform headlessly.
+    # full sync is required, which older versions of AnkiConnect refuse to
+    # perform headlessly (newer versions ask in Anki which way to sync).
     FULL_SYNC_STATUSES = {2, 3, 4}  # FULL_SYNC, FULL_DOWNLOAD, FULL_UPLOAD
 
     @staticmethod
     def sync() -> bool:
-        """Sync the collection with AnkiWeb."""
+        """Sync the collection with AnkiWeb, returning once the sync has finished.
+
+        Newer versions of AnkiConnect only acknowledge a standalone `sync`
+        (it carries on in the background and any failure is never reported),
+        whereas `multi` waits for each action's final outcome. So the sync is
+        sent as a one-item `multi`, which also works with older versions.
+        """
         try:
-            AnkiConnect.invoke("sync")
+            result = AnkiConnect.invoke("multi", actions=[AnkiConnect.request("sync")])
+            if len(result) != 1:
+                raise AnkiConnectError(f"expected one sync result but got {len(result)}")
+            AnkiConnect.parse(result[0])
             print("Synced to AnkiWeb.")
             return True
         except AnkiConnectError as e:
