@@ -904,6 +904,8 @@ class App:
             print("Cards already in Anki have been changed there - aborting.")
             sys.exit(1)
 
+        self.skip_unchanged_notes(directories)
+
         requests = []
         print("Getting tag list")
         requests.append(
@@ -949,7 +951,9 @@ class App:
         if sum(change_counts) == 0:
             print("Finished: no changes found.")
             return
-        self.print_summary(*change_counts)
+        added, edited, deleted, added_media = change_counts
+        unchanged = sum(len(file.unchanged_notes()) for directory in directories for file in directory.files)
+        self.print_summary(added, edited - unchanged, deleted, added_media, unchanged)
         self.snapshot_decks(affected_decks, backups_path, output_diff=False)
         # The changes are already in Anki, so a failure here is not fatal.
         if not args.offline:
@@ -1115,6 +1119,21 @@ class App:
         return any(changed)
 
     @staticmethod
+    def skip_unchanged_notes(directories):
+        """Have each file skip the updates that would leave a note as Anki already has it."""
+        files = [file for directory in directories for file in directory.files]
+        note_ids = [parsed.id for file in files for parsed in file.notes_to_edit]
+        if not note_ids:
+            return
+        notes_in_anki = {
+            info["noteId"]: info
+            for info in AnkiConnect.invoke("notesInfo", notes=note_ids)
+            if info
+        }
+        for file in files:
+            file.skip_unchanged(notes_in_anki)
+
+    @staticmethod
     def get_change_counts(directories):
         scanned_files = [
             f for directory in directories for f in directory.files
@@ -1128,12 +1147,14 @@ class App:
         return added, updated, deleted, len(MEDIA)
 
     @staticmethod
-    def print_summary(added, updated, deleted, added_media):
+    def print_summary(added, updated, deleted, added_media, unchanged=0):
         """Print a one-line summary of what was added/updated/deleted."""
         print(
             f"Finished: {added} note(s) added, {updated} updated, "
             f"{deleted} deleted; {added_media} media file(s) added."
         )
+        if unchanged:
+            print(f"{unchanged} note(s) were already up to date in Anki.")
 
     # ChangesRequired statuses (from Anki's sync.proto) that mean a one-way
     # full sync is required, which older versions of AnkiConnect refuse to
@@ -1190,6 +1211,10 @@ class File:
         self.note_ids = []
         self.card_ids = []
         self.tags = []
+        # IDs of the notes to edit whose fields, or tags, are already in Anki
+        # exactly as they are in the file - see skip_unchanged().
+        self.unchanged_fields = set()
+        self.unchanged_tags = set()
 
     def setup_frozen_fields_dict(self):
         self.frozen_fields_dict = {
@@ -1284,6 +1309,8 @@ class File:
         self.inline_notes_to_add = []
         self.inline_id_indexes = []
         self.ignore_spans = []
+        self.unchanged_fields = set()
+        self.unchanged_tags = set()
 
     def _scan_for_deletes(self):
         """Record the ids of notes marked for deletion in the file."""
@@ -1404,6 +1431,33 @@ class File:
             notes=self.notes_to_delete
         )
 
+    def tags_for(self, parsed) -> str:
+        """The tags, space separated, that a note to edit should end up with."""
+        return " ".join(parsed.note["tags"]) + " " + self.global_tags
+
+    def skip_unchanged(self, notes_in_anki):
+        """Note which of the notes to edit are already in Anki as they are here.
+
+        `notes_in_anki` maps note IDs to their `notesInfo`. A changed file has
+        every one of its notes re-sent, though typically few of them changed,
+        and newer versions of AnkiConnect notify Anki's GUI after each action,
+        which makes re-sending them all slow (and marks them all as modified).
+        So the fields and tags that Anki already has are not sent again.
+        """
+        for parsed in self.notes_to_edit:
+            info = notes_in_anki.get(parsed.id)
+            if info is None:
+                continue
+            in_anki = {name: field["value"] for name, field in info["fields"].items()}
+            if all(in_anki.get(name) == value for name, value in parsed.note["fields"].items()):
+                self.unchanged_fields.add(parsed.id)
+            if set(self.tags_for(parsed).split()) == set(info["tags"]):
+                self.unchanged_tags.add(parsed.id)
+
+    def unchanged_notes(self) -> set:
+        """IDs of the notes to edit that need neither their fields nor tags updating."""
+        return self.unchanged_fields & self.unchanged_tags
+
     def get_update_fields(self):
         """Get the AnkiConnect-formatted request to update fields."""
         return AnkiConnect.request(
@@ -1417,6 +1471,7 @@ class File:
                     }
                 )
                 for parsed in self.notes_to_edit
+                if parsed.id not in self.unchanged_fields
             ]
         )
 
@@ -1448,7 +1503,7 @@ class File:
         """Get the AnkiConnect-formatted request to clear tags."""
         return AnkiConnect.request(
             "removeTags",
-            notes=[parsed.id for parsed in self.notes_to_edit],
+            notes=[parsed.id for parsed in self.notes_to_edit if parsed.id not in self.unchanged_tags],
             tags=" ".join(self.tags)
         )
 
@@ -1460,9 +1515,10 @@ class File:
                 AnkiConnect.request(
                     "addTags",
                     notes=[parsed.id],
-                    tags=" ".join(parsed.note["tags"]) + " " + self.global_tags
+                    tags=self.tags_for(parsed)
                 )
                 for parsed in self.notes_to_edit
+                if parsed.id not in self.unchanged_tags
             ]
         )
 

@@ -695,6 +695,154 @@ def test_directory_scans_all_when_no_ignore_file(scan_env):
 
 
 # --------------------------------------------------------------------------
+# Skipping the notes that Anki already has as they are in the file
+# --------------------------------------------------------------------------
+
+def anki_note(note_id, fields, tags):
+    """A note as AnkiConnect's `notesInfo` reports it."""
+    return {
+        "noteId": note_id,
+        "tags": tags,
+        "fields": {name: {"value": value, "order": i} for i, (name, value) in enumerate(fields.items())},
+    }
+
+
+@pytest.fixture
+def three_notes(scan_env):
+    """A scanned file of three existing notes, and those notes as Anki has them."""
+    mta.App.EXISTING_IDS = [1, 2, 3]
+    path = scan_env / "deck.md"
+    path.write_text("".join(
+        f"START\nBasic\nFront: front {i}\nBack: back {i}\n<!--ID: {i}-->\nEND\n" for i in (1, 2, 3)
+    ))
+    f = mta.File(path)
+    f.scan_file()
+    f.tags = ["Markdown_to_Anki", "other"]
+    in_anki = {
+        i: anki_note(i, {"Front": f"front {i}", "Back": f"back {i}"}, ["Markdown_to_Anki"]) for i in (1, 2, 3)
+    }
+    return f, in_anki
+
+
+def updated_ids(f):
+    return [action["params"]["note"]["id"] for action in f.get_update_fields()["params"]["actions"]]
+
+
+def retagged_ids(f):
+    added = [action["params"]["notes"] for action in f.get_add_tags()["params"]["actions"]]
+    cleared = f.get_clear_tags()["params"]["notes"]
+    # Tags are cleared and then re-added, so the two must cover the same notes
+    # or a note would be left without its tags.
+    assert [[note_id] for note_id in cleared] == added
+    return cleared
+
+
+def test_every_note_is_sent_if_anki_was_not_asked_what_it_has(three_notes):
+    f, _ = three_notes
+    assert updated_ids(f) == [1, 2, 3]
+    assert retagged_ids(f) == [1, 2, 3]
+    assert f.unchanged_notes() == set()
+
+
+def test_notes_anki_already_has_are_not_sent_again(three_notes):
+    f, in_anki = three_notes
+    f.skip_unchanged(in_anki)
+    assert updated_ids(f) == []
+    assert retagged_ids(f) == []
+    assert f.unchanged_notes() == {1, 2, 3}
+
+
+def test_only_the_note_with_a_changed_field_is_updated(three_notes):
+    f, in_anki = three_notes
+    in_anki[2]["fields"]["Back"]["value"] = "an older back"
+    f.skip_unchanged(in_anki)
+    assert updated_ids(f) == [2]
+    assert retagged_ids(f) == []
+    assert f.unchanged_notes() == {1, 3}
+
+
+def test_a_field_the_file_has_emptied_is_updated(three_notes):
+    # Anki holds text in a field that the file now leaves empty.
+    f, in_anki = three_notes
+    f.notes_to_edit[0].note["fields"]["Back"] = ""
+    f.skip_unchanged(in_anki)
+    assert updated_ids(f) == [1]
+
+
+def test_only_the_note_with_different_tags_is_retagged(three_notes):
+    f, in_anki = three_notes
+    in_anki[3]["tags"] = ["Markdown_to_Anki", "other"]
+    f.skip_unchanged(in_anki)
+    assert updated_ids(f) == []
+    assert retagged_ids(f) == [3]
+    assert f.unchanged_notes() == {1, 2}
+
+
+def test_file_tags_count_towards_a_notes_tags(three_notes):
+    f, in_anki = three_notes
+    f.global_tags = "extra"
+    f.skip_unchanged(in_anki)
+    assert retagged_ids(f) == [1, 2, 3]
+    for info in in_anki.values():
+        info["tags"] = ["extra", "Markdown_to_Anki"]  # The order doesn't matter.
+    f.unchanged_tags = set()
+    f.skip_unchanged(in_anki)
+    assert retagged_ids(f) == []
+
+
+def test_a_note_anki_did_not_report_is_still_sent(three_notes):
+    f, in_anki = three_notes
+    del in_anki[1]
+    f.skip_unchanged(in_anki)
+    assert updated_ids(f) == [1]
+    assert retagged_ids(f) == [1]
+
+
+def test_rescanning_forgets_what_was_unchanged(three_notes):
+    f, in_anki = three_notes
+    f.skip_unchanged(in_anki)
+    mta.App.SEEN_IDS = set()  # As at the start of a new run.
+    f.scan_file()
+    assert f.unchanged_notes() == set()
+
+
+def test_app_asks_anki_once_for_all_the_notes_to_edit(three_notes, monkeypatch):
+    f, in_anki = three_notes
+    asked = []
+
+    def invoke(action, **params):
+        asked.append((action, params))
+        # Anki answers with an empty object for a note it doesn't have.
+        return [in_anki[1], {}, in_anki[3]]
+
+    monkeypatch.setattr(mta.AnkiConnect, "invoke", invoke)
+    directory = mta.Directory.__new__(mta.Directory)
+    directory.files = [f]
+    mta.App.skip_unchanged_notes([directory])
+    assert asked == [("notesInfo", {"notes": [1, 2, 3]})]
+    assert updated_ids(f) == [2]
+
+
+def test_app_does_not_ask_anki_when_there_are_no_notes_to_edit(monkeypatch):
+    def invoke(action, **params):
+        raise AssertionError("Anki should not be asked")
+
+    monkeypatch.setattr(mta.AnkiConnect, "invoke", invoke)
+    directory = mta.Directory.__new__(mta.Directory)
+    directory.files = []
+    mta.App.skip_unchanged_notes([directory])
+
+
+def test_summary_reports_the_notes_that_were_already_up_to_date(capsys):
+    mta.App.print_summary(20, 12, 0, 0, 1088)
+    out = capsys.readouterr().out
+    assert "20 note(s) added, 12 updated, 0 deleted" in out
+    assert "1088 note(s) were already up to date in Anki." in out
+    mta.App.print_summary(20, 12, 0, 0)
+    assert "up to date" not in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
 # App.sync
 # --------------------------------------------------------------------------
 
